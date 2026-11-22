@@ -1266,18 +1266,19 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
     }
     // Apply line/point tex offset
     if (config.lineMode == 3) {
-      // GX_POINTS: offset S for right columns, T for bottom rows
+      // GX_POINTS: offset S for the right columns and T for the bottom rows on screen. Vertices 0
+      // and 1 take the negative clip-space y offset, which is the bottom of the screen.
       vtxXfrAttrs += fmt::format(
           "\n    if ((ubuf.line_texcoord_mask & (1u << {0})) != 0u) {{"
           "\n        if ((vidx & 1u) != 0u) {{ tc{0}_proj.x += ubuf.line_tex_offset; }}"
-          "\n        if (vidx >= 2u) {{ tc{0}_proj.y += ubuf.line_tex_offset; }}"
+          "\n        if (vidx < 2u) {{ tc{0}_proj.y += ubuf.line_tex_offset; }}"
           "\n    }}",
           i);
     } else if (config.lineMode != 0) {
-      // GX_LINES / GX_LINESTRIP: offset one axis for perpendicular side
+      // GX_LINES / GX_LINESTRIP: offset S on one side of the line, whatever its direction
       vtxXfrAttrs += fmt::format(
           "\n    if ((ubuf.line_texcoord_mask & (1u << {0})) != 0u && (vidx & 1u) != 0u) {{"
-          "\n        tc{0}_proj.y += ubuf.line_tex_offset;"
+          "\n        tc{0}_proj.x += ubuf.line_tex_offset;"
           "\n    }}",
           i);
     }
