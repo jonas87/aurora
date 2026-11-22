@@ -34,8 +34,13 @@ constexpr float kC6 = kC2 - kC2MinusC6;
 
 constexpr float kOutputBias = 128.0f * 8.0f;
 
-// Whether to reproduce a bug from SDK THP that swaps columns 3 and 4 in _quarterIDCT
-constexpr bool kBuggyQuarterIdct = false;
+// Whether to reproduce a bug from SDK THP that swaps columns 3 and 4 in _quarterIDCT. A game whose
+// own decoder has the bug decodes its movies bit-exactly with it; define
+// AURORA_THP_SDK_QUARTER_IDCT=1 to reproduce it.
+#ifndef AURORA_THP_SDK_QUARTER_IDCT
+#define AURORA_THP_SDK_QUARTER_IDCT 0
+#endif
+constexpr bool kBuggyQuarterIdct = AURORA_THP_SDK_QUARTER_IDCT != 0;
 
 bool read_segment(aurora::ByteReader& reader, const u8*& data, size_t& size) noexcept {
   u16 encodedSize = 0;
