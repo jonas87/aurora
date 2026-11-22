@@ -85,6 +85,7 @@ void bp_gen_mode(u8, u32 value) noexcept {
     break;
   }
   g_gxState.numIndStages = reg_get(value, 3, 16);
+  g_gxState.coplanar = reg_get(value, 1, 19) != 0;
   g_gxState.xfRegValid.reset(0x09);
   g_gxState.xfRegValid.reset(0x3F);
 }

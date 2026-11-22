@@ -209,6 +209,10 @@ wgpu::PrimitiveState to_primitive_state(GXCullMode gx_cullMode) {
     break;
   case GX_CULL_NONE:
     break;
+  case GX_CULL_ALL:
+    // Culled triangles are not drawn (the command processor latches their depth plane instead);
+    // the pipeline needs no cull state for them.
+    break;
   }
   return {
       .topology = wgpu::PrimitiveTopology::TriangleList,
@@ -302,8 +306,9 @@ void set_logical_viewport(const gfx::Viewport& viewport) noexcept {
 }
 
 void set_render_viewport(const gfx::Viewport& viewport) noexcept {
-  if (viewport.left != g_gxState.renderViewport.left || viewport.width != g_gxState.renderViewport.width ||
-      viewport.height != g_gxState.renderViewport.height) {
+  // The whole viewport: the co-planar depth plane (coplanar_window_plane) also reads its top and
+  // depth range.
+  if (viewport != g_gxState.renderViewport) {
     g_gxState.dirty |= DirtyUniform;
   }
   g_gxState.renderViewport = viewport;
@@ -459,6 +464,8 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
   if (g_gxState.alphaCompare) {
     config.shaderConfig.alphaCompare = g_gxState.alphaCompare;
   }
+  config.shaderConfig.coplanar =
+      config.shaderConfig.lineMode == 0 && g_gxState.coplanar && g_gxState.coplanarPlaneValid;
   const auto cullMode = config.shaderConfig.lineMode == 0 ? g_gxState.cullMode : GX_CULL_NONE;
   const auto [polygonOffset, polygonOffsetScale] = polygon_offset_for_cull_mode(cullMode);
   const bool hasAlpha = efb_has_alpha(g_gxState.pixelFmt);

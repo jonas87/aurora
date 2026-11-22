@@ -934,6 +934,11 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
 
   // Load points for line/point expansion
   std::string_view vidxAttr = "vidx"sv;
+  if (config.coplanar) {
+    uniBufAttrs +=
+        "\n    coplanar_plane: vec4f,"
+        "\n    coplanar_depth: vec4f,";
+  }
   if (config.lineMode != 0) {
     vtxInAttrs += ",\n    @builtin(instance_index) iidx: u32";
     uniBufAttrs +=
@@ -1009,6 +1014,14 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
         "\n    let mv_pos = vec4f({}, 1.0) * ubuf.postex_mtx[in_pnmtxidx];"
         "\n    out.pos = vec4f(mv_pos, 1.0) * ubuf.proj;",
         vtx_attr(config, GX_VA_POS));
+    if (config.coplanar) {
+      // ZFreeze: the depth of the plane latched from the last triangle culled by GX_CULL_ALL, at the
+      // vertex's position on screen. Depth is linear on screen, so the triangle's depth is the plane.
+      vtxXfrAttrsPre +=
+          "\n    let coplanar_ndc = out.pos.xy / out.pos.w;"
+          "\n    out.pos.z = (ubuf.coplanar_plane.x * coplanar_ndc.x + ubuf.coplanar_plane.y * coplanar_ndc.y +"
+          " ubuf.coplanar_plane.z) * out.pos.w;";
+    }
   } else if (config.lineMode == 3) {
     // GX_POINTS: expand single vertex to axis-aligned screen-space square
     vtxXfrAttrsPre +=
@@ -1663,6 +1676,42 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
         "};\n";
     fragmentOutputType = "FragmentOutput"sv;
     fragmentReturn = "\n    return FragmentOutput(vec4f(prev.rgb, 1.0), prev);";
+  }
+
+  if (config.coplanar) {
+    // ZFreeze: the depth is the latched plane's at the pixel (coplanar_window_plane), the same for
+    // every co-planar primitive covering it, so equal and less-equal compares between them hold as
+    // on the hardware. The vertex stage's plane depth still decides clipping.
+    fragmentFn +=
+        "\n    let coplanar_frag_depth = ubuf.coplanar_depth.x * in.pos.x + ubuf.coplanar_depth.y * in.pos.y +"
+        " ubuf.coplanar_depth.z;";
+    if (dstAlphaMode == DstAlphaMode::DualSource) {
+      fragmentOutput =
+          "\nstruct FragmentOutput {\n"
+          "    @location(0) @blend_src(0) color: vec4f,\n"
+          "    @location(0) @blend_src(1) blend: vec4f,\n"
+          "    @builtin(frag_depth) depth: f32,\n"
+          "};\n";
+      fragmentReturn = "\n    return FragmentOutput(vec4f(prev.rgb, 1.0), prev, coplanar_frag_depth);";
+    } else if (normalAttachment != UINT32_MAX) {
+      fragmentOutput = fmt::format(
+          "\nstruct FragmentOutput {{\n"
+          "    @location(0) color: vec4f,\n"
+          "    @location({}) normal: vec4f,\n"
+          "    @builtin(frag_depth) depth: f32,\n"
+          "}};\n",
+          normalAttachment);
+      const auto returnPos = fragmentReturn.rfind("\n    return out;");
+      fragmentReturn.insert(returnPos, "\n    out.depth = coplanar_frag_depth;");
+    } else {
+      fragmentOutput =
+          "\nstruct FragmentOutput {\n"
+          "    @location(0) color: vec4f,\n"
+          "    @builtin(frag_depth) depth: f32,\n"
+          "};\n";
+      fragmentReturn = "\n    return FragmentOutput(prev, coplanar_frag_depth);";
+    }
+    fragmentOutputType = "FragmentOutput"sv;
   }
 
   auto shaderSource =

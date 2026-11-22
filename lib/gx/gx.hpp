@@ -340,6 +340,12 @@ struct GXState {
   GXProjectionType projType; // for GXGetProjectionv
   FogState fog;
   GXCullMode cullMode = GX_CULL_BACK;
+  // ZFreeze: GXSetCoPlanar's flag, and the depth plane of the last triangle culled by GX_CULL_ALL as
+  // z = a * x + b * y + c in normalised device coordinates (a, b, c in x, y, z), which co-planar
+  // triangles take for their depth.
+  bool coplanar = false;
+  bool coplanarPlaneValid = false;
+  Vec4<float> coplanarPlane{};
   u8 lineWidth = 0;
   u8 pointSize = 0;
   GXTexOffset lineTexOffset = GX_TO_ZERO;
@@ -469,6 +475,17 @@ inline float clear_depth_value(u32 z) {
 
 inline float clear_depth_value() { return clear_depth_value(g_gxState.clearDepth); }
 
+// The projection as the uniform block holds it: its depth row taken to WebGPU's [0, 1] range, reversed when depth is.
+inline Mat4x4<float> uploaded_projection() noexcept {
+  auto proj = g_gxState.proj;
+  if constexpr (UseReversedZ) {
+    proj.m2 = proj.m2 * Vec4{-1.f, -1.f, -1.f, -1.f};
+  } else {
+    proj.m2 = proj.m2 + proj.m3;
+  }
+  return proj;
+}
+
 static inline bool requires_load_conversion(const GXTexObj_& obj) {
   switch (obj.format()) {
   case GX_TF_I4:
@@ -506,7 +523,8 @@ struct ShaderConfig {
   u8 vtxStride = 0;
   u8 lineMode : 2 = 0; // 1 = GX_LINES, 2 = GX_LINESTRIP, 3 = GX_POINTS
   u8 fogRangeEnabled : 1 = false;
-  u8 pad1 : 5 = 0;
+  u8 coplanar : 1 = false; // depth from the latched co-planar plane (ZFreeze)
+  u8 pad1 : 4 = 0;
   u8 pad2 = 0;
   std::array<AttrConfig, MaxVtxAttr> attrs;
   std::array<TevSwap, MaxTevSwap> tevSwapTable;
@@ -545,6 +563,7 @@ struct ShaderInfo {
   bool usesFog : 1 = false;
   bool lightingEnabled : 1 = false;
   u8 lineMode : 2 = 0;
+  bool coplanar : 1 = false;
 };
 struct BindGroupRanges {
   std::array<gfx::Range, MaxIndexAttr> vaRanges{};
