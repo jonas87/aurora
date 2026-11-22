@@ -999,35 +999,19 @@ void handle_cp(u8 addr, u32 value) noexcept {
 }
 
 bool copy_xf_data(u32 addr, const u8* data, u32 len, std::endian e) noexcept {
-  if (addr < 0x78) {
-    // Position matrices (0x0000-0x0077)
-    u32 mtxIdx = addr / 12;
-    u32 startOffset = addr % 12;
-    CHECK(mtxIdx < MaxPnMtx, "XF: PosMtx copy oob? Should never happen; mtxIdx={}", mtxIdx);
-    CHECK(startOffset == 0 && len == 12, "XF: PosMtx sub-copy unsupported: offs={}, len={}", startOffset, len);
-    f32* flat = reinterpret_cast<f32*>(&g_gxState.pnMtx[mtxIdx].pos);
-    bool changed = false;
-    for (u32 i = 0; i < len; i++) {
-      changed |= store_xf_f32(flat[i], read_bits<u32>(data + i * 4, e));
-    }
-    if (changed) {
-      g_gxState.dirty |= DirtyUniform;
-    }
-    return true;
-  }
   if (addr < 0x0F0) {
-    // Texture matrices (0x078-0x0EF)
-    u32 texBase = addr - 0x078;
-    u32 mtxIdx = texBase / 12;
-    u32 startOffset = texBase % 12;
-    CHECK(mtxIdx < MaxTexMtx, "XF TexMtx copy oob? Should never happen; mtxIdx={}", mtxIdx);
-    CHECK(startOffset == 0 && (len == 8 || len == 12), "XF TexMtx sub-copy unsupported: offs={}, len={}", startOffset,
-          len);
-
-    f32* flat = reinterpret_cast<f32*>(&g_gxState.texMtxs[mtxIdx]);
+    // Position and texture matrix memory (0x000-0x0EF): 60 rows of four words, three rows for each
+    // of the ten position matrices (0x000-0x077), then three for each of the ten texture matrices
+    // (0x078-0x0EF). As on hardware, a load may start at any word and cross matrices: games keep
+    // two-row texture matrices at any row, position-matrix memory included.
+    CHECK(len <= 0x0F0 - addr, "XF: matrix memory copy crosses 0x0F0: addr={:#x}, len={}", addr, len);
     bool changed = false;
-    for (u32 i = 0; i < len; i++) {
-      changed |= store_xf_f32(flat[i], read_bits<u32>(data + i * 4, e));
+    for (u32 i = 0; i < len && addr + i < 0x0F0; i++) {
+      const u32 word = addr + i;
+      const u32 row = word / 4;
+      f32* matrix = row < 30 ? reinterpret_cast<f32*>(&g_gxState.pnMtx[row / 3].pos)
+                             : reinterpret_cast<f32*>(&g_gxState.texMtxs[(row - 30) / 3]);
+      changed |= store_xf_f32(matrix[(row % 3) * 4 + word % 4], read_bits<u32>(data + i * 4, e));
     }
     if (changed) {
       g_gxState.dirty |= DirtyUniform;

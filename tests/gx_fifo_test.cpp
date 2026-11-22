@@ -3110,6 +3110,26 @@ TEST_F(GXFifoTest, TexCoordGen_Identity) {
   EXPECT_EQ(tcg.postMtx, GX_PTIDENTITY);
 }
 
+// Matrix memory is addressed by row: a matrix loaded at row 31 fills rows 31 to 33, the second and third rows of
+// texture matrix 0 (rows 30 to 32) and the first of texture matrix 1.
+TEST_F(GXFifoTest, LoadTexMtxImm_StartsAtAnyRow) {
+  f32 mtx[3][4] = {{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11, 12}};
+  GXLoadTexMtxImm(mtx, GX_TEXMTX0 + 1, GX_MTX3x4);
+  auto bytes = capture_fifo();
+
+  reset_gx_state();
+  decode_fifo(bytes);
+
+  const auto& first = g_gxState.texMtxs[0];
+  const auto& second = g_gxState.texMtxs[1];
+  EXPECT_EQ(first.m1[0], 1.f);
+  EXPECT_EQ(first.m1[3], 4.f);
+  EXPECT_EQ(first.m2[0], 5.f);
+  EXPECT_EQ(first.m2[3], 8.f);
+  EXPECT_EQ(second.m0[0], 9.f);
+  EXPECT_EQ(second.m0[3], 12.f);
+}
+
 // --- GXSetChanAmbColor / GXSetChanMatColor (XF 0x100A-0x100D) ---
 
 TEST_F(GXFifoTest, ChanAmbColor_Color0) {
