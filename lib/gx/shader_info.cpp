@@ -251,8 +251,9 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
     }
   }
 
-  // 10 position matrices, 10 texture matrices, 10 normal matrices.
-  info.uniformSize += sizeof(Mat3x4<float>) * 30;
+  // 10 position matrices, 10 texture matrices and the identity of matrix memory's rows 60 to 62,
+  // then 10 normal matrices and an identity.
+  info.uniformSize += sizeof(Mat3x4<float>) * 32;
 
   for (int i = 0; i < config.tevStageCount; ++i) {
     const auto& stage = config.tevStages[i];
