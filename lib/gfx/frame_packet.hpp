@@ -3,6 +3,7 @@
 #include "pipeline_cache.hpp"
 #include "types.hpp"
 #include "tex_palette_conv.hpp"
+#include "tex_reinterpret_conv.hpp"
 #include "texture.hpp"
 #include "efb.hpp"
 
@@ -116,6 +117,7 @@ struct RenderPass {
   bool sealed = false;
   bool presentConsumer = false;
   std::vector<tex_palette_conv::ConvRequest> paletteConvs;
+  std::vector<tex_reinterpret_conv::ConvRequest> reinterpretConvs;
 
   RenderTargetLayout target_layout() const noexcept;
   bool has_consumer() const {

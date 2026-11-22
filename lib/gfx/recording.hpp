@@ -1,5 +1,6 @@
 #pragma once
 
+#include "tex_reinterpret_conv.hpp"
 #include "types.hpp"
 #include "../imgui.hpp"
 
@@ -79,6 +80,7 @@ namespace tex_palette_conv {
 struct ConvRequest;
 }
 void queue_palette_conv(tex_palette_conv::ConvRequest req);
+void queue_reinterpret_conv(tex_reinterpret_conv::ConvRequest req);
 
 Range push_verts(const uint8_t* data, size_t length, size_t alignment);
 template <typename T>

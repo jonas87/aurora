@@ -1104,6 +1104,13 @@ void queue_palette_conv(tex_palette_conv::ConvRequest req) {
   renderPass.paletteConvs.push_back(std::move(req));
 }
 
+void queue_reinterpret_conv(tex_reinterpret_conv::ConvRequest req) {
+  auto& renderPass = current_render_passes()[g_recorder.currentRenderPass];
+  AURORA_ASSERT(!renderPass.sealed, "Attempted to append copy reinterpretation to sealed render pass {}",
+                g_recorder.currentRenderPass);
+  renderPass.reinterpretConvs.push_back(std::move(req));
+}
+
 bool is_offscreen() noexcept { return g_recorder.inOffscreen; }
 
 bool has_normal_attachment() noexcept {
