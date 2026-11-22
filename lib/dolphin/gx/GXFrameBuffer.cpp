@@ -50,8 +50,15 @@ void copy_tex(const void* dest, GXBool clear) noexcept {
   const auto clearColor = clear && g_gxState.colorUpdate;
   const auto clearAlpha = clear && g_gxState.alphaUpdate && efb_has_alpha(g_gxState.pixelFmt);
   const auto clearDepth = clear && g_gxState.depthUpdate;
+  // The box filter averages 2x2 logical pixels per texel: at Aurora's render scale, that many more
+  // physical ones, so that a scaled copy keeps the filter's footprint.
+  u32 boxFilterTaps = 0;
+  if (g_gxState.texCopyMipmap && g_gxState.texCopySrc.width > 0) {
+    const float scale = static_cast<float>(rect.width) / static_cast<float>(g_gxState.texCopySrc.width);
+    boxFilterTaps = std::max<u32>(2, static_cast<u32>(std::lround(2.f * scale)));
+  }
   gfx::resolve_pass_into(copy.handle, rect, clearColor, clearAlpha, clearDepth, g_gxState.clearColor,
-                         clear_depth_value(), texCopyFmt, g_gxState.pixelFmt);
+                         clear_depth_value(), texCopyFmt, g_gxState.pixelFmt, boxFilterTaps);
 }
 
 void copy_disp(GXBool clear) noexcept {

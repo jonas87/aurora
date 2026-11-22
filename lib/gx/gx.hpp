@@ -409,6 +409,8 @@ struct GXState {
   u32 texCopyDstWidth = 0;
   u32 texCopyDstHeight = 0;
   bool texCopyDstWide = false;
+  // The copy's box filter (GXSetTexCopyDst's mipmap flag): each texel averages 2x2 source pixels.
+  bool texCopyMipmap = false;
   const void* texCopyDest = nullptr;
   absl::flat_hash_map<const void*, CopyTextureRef> copyTextures;
   gfx::ClipRect dispCopySrc{0, 0, 640, 480};
