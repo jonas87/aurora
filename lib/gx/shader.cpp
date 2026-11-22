@@ -1038,9 +1038,9 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
         "\n    out.pos = vec4f(clip_base.xy + offset_ndc * clip_base.w, clip_base.zw);";
   }
   vtxXfrAttrsPre += fmt::format(
-      "\n    let nrm_tmp = vec4f({}, 0.0) * ubuf.nrm_mtx[in_pnmtxidx];"
+      "\n    let nrm_tmp = vec4f({0}, 0.0) * ubuf.nrm_mtx[min(in_pnmtxidx, {1}u)];"
       "\n    let mv_nrm = select(nrm_tmp, normalize(nrm_tmp), dot(nrm_tmp, nrm_tmp) > 1e-10);",
-      vtx_attr(config, GX_VA_NRM));
+      vtx_attr(config, GX_VA_NRM), MaxPnMtx);
   const bool useNormalTarget = normalAttachment != UINT32_MAX && config.attrs[GX_VA_NRM].attrType != GX_NONE;
   if ((useNormalTarget && !info.lightingEnabled) || EnableNormalVisualization) {
     vtxOutAttrs += fmt::format("\n    @location({}) mv_nrm: vec3f,", vtxOutIdx++);
@@ -1048,8 +1048,11 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
   }
 
   uniBufAttrs += "\n    proj: mat4x4f,";
-  uniBufAttrs += fmt::format("\n    postex_mtx: array<mat3x4f, {}>,", MaxPnMtx + MaxTexMtx);
-  uniBufAttrs += fmt::format("\n    nrm_mtx: array<mat3x4f, {}>,", MaxPnMtx);
+  // Matrix memory's rows 60 to 62 (matrix 20, after the position and texture matrices) hold the
+  // identity that GXInit loads there: position matrix 60 and texture matrix GX_IDENTITY read it.
+  // The normal matrices end with an identity for a position matrix past them.
+  uniBufAttrs += fmt::format("\n    postex_mtx: array<mat3x4f, {}>,", MaxPnMtx + MaxTexMtx + 1);
+  uniBufAttrs += fmt::format("\n    nrm_mtx: array<mat3x4f, {}>,", MaxPnMtx + 1);
   std::string fragmentFnPre;
   std::string fragmentFn;
 
@@ -1188,11 +1191,11 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
       const u32 lightIdx = tcg.type - GX_TG_BUMP0;
       vtxXfrAttrs += fmt::format(
           "\n    let bump_ldir{0} = normalize(ubuf.lights[{1}].pos - mv_pos);"
-          "\n    let bump_tan{0} = vec4f(in_tangent, 0.0) * ubuf.nrm_mtx[in_pnmtxidx];"
-          "\n    let bump_bin{0} = vec4f(in_binrm, 0.0) * ubuf.nrm_mtx[in_pnmtxidx];"
+          "\n    let bump_tan{0} = vec4f(in_tangent, 0.0) * ubuf.nrm_mtx[min(in_pnmtxidx, {3}u)];"
+          "\n    let bump_bin{0} = vec4f(in_binrm, 0.0) * ubuf.nrm_mtx[min(in_pnmtxidx, {3}u)];"
           "\n    out.tex{0}_uv = tc{2}_proj.xy + vec2f(dot(bump_ldir{0}, bump_tan{0}), dot(bump_ldir{0}, "
           "bump_bin{0}));",
-          i, lightIdx, tcg.embossSrc);
+          i, lightIdx, tcg.embossSrc, MaxPnMtx);
       fragmentFnPre += fmt::format("\n    var tex{0}_uv = in.tex{0}_uv.xy;", i);
       continue;
     }
@@ -1239,7 +1242,7 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
         // row, and a texture matrix ID is its first row. Row r is column r % 3 of postex_mtx[r / 3];
         // rows past the end of matrix memory read as zero.
         const auto rowDot = [&](u32 row) {
-          if (row >= (MaxPnMtx + MaxTexMtx) * 3) {
+          if (row >= (MaxPnMtx + MaxTexMtx + 1) * 3) {
             return std::string{"0.0"};
           }
           return fmt::format("dot(tc{}, ubuf.postex_mtx[{}][{}])", i, row / 3, row % 3);
