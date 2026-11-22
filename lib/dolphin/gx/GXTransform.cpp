@@ -93,7 +93,8 @@ void GXLoadNrmMtxImm(const void* mtx_, u32 id) {
 }
 
 void GXSetCurrentMtx(u32 id) {
-  CHECK(id >= GX_PNMTX0 && id <= GX_PNMTX9, "invalid pn mtx {}", id);
+  // The position matrices, or row 60 of matrix memory: the identity GXInit loads there.
+  CHECK((id >= GX_PNMTX0 && id <= GX_PNMTX9) || id == GX_IDENTITY, "invalid pn mtx {}", id);
   SET_REG_FIELD(0, __gx->matIdxA, 6, 0, id);
   __GXSetMatrixIndex(GX_VA_PNMTXIDX);
 }

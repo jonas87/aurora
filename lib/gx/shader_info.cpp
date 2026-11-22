@@ -503,10 +503,18 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
   for (int i = 0; i < MaxTexMtx; i++) {
     buf.append(g_gxState.texMtxs[i]);
   }
+  // Matrix memory's rows 60 to 62: the identity GXInit loads there (see the shader's postex_mtx).
+  const Mat3x4<float> identity{
+      Vec4{1.f, 0.f, 0.f, 0.f},
+      Vec4{0.f, 1.f, 0.f, 0.f},
+      Vec4{0.f, 0.f, 1.f, 0.f},
+  };
+  buf.append(identity);
 
   for (int i = 0; i < MaxPnMtx; i++) {
     buf.append(g_gxState.pnMtx[i].nrm);
   }
+  buf.append(identity);
 
   for (int i = 0; i < info.loadsTevReg.size(); ++i) {
     if (info.loadsTevReg.test(i)) {
