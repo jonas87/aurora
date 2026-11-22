@@ -4,6 +4,7 @@
 #include "../gfx/recording.hpp"
 #include "../gfx/tex_copy_conv.hpp"
 #include "../gfx/tex_palette_conv.hpp"
+#include "../gfx/tex_reinterpret_conv.hpp"
 #include "../gfx/texture_convert.hpp"
 #include "../gfx/texture_replacement.hpp"
 #include "shader_info.hpp"
@@ -42,6 +43,15 @@ struct DynamicPaletteEntry {
   gfx::TextureHandle handle;
   u32 sourceRevision = 0;
   u32 tlutDataVersion = 0;
+  uint64_t lastUsedFrame = 0;
+};
+
+// A copy read through a texture object of another format: the copy's bytes decoded in the object's
+// format, redone when the copy changes.
+struct ReinterpretedCopyEntry {
+  gfx::TextureHandle handle;
+  u32 sourceRevision = 0;
+  bool converted = false;
   uint64_t lastUsedFrame = 0;
 };
 
@@ -389,6 +399,45 @@ gfx::TextureHandle get_tlut_texture(const GXTlutObj_& tlut) {
   return handle;
 }
 
+absl::flat_hash_map<DynamicPaletteKey, ReinterpretedCopyEntry> s_reinterpretedCopies;
+
+// The texture a texture object reads from a copy: the copy's own, or its bytes decoded in the
+// object's format when that gives them another meaning (tex_reinterpret_conv).
+gfx::TextureHandle resolve_copy_for_object(const GXTexObj_& obj, const GXState::CopyTextureRef& source) {
+  gfx::tex_reinterpret_conv::Source sourceKind;
+  gfx::tex_reinterpret_conv::Target targetKind;
+  if (!gfx::tex_reinterpret_conv::plan(source.key.format, static_cast<GXTexFmt>(obj.format()), sourceKind,
+                                       targetKind) ||
+      obj.width() == 0 || obj.height() == 0 || source.width == 0 || source.height == 0) {
+    return source.handle;
+  }
+  auto& entry = s_reinterpretedCopies[DynamicPaletteKey{
+      .sourceIdentity = source.key.dest,
+      .width = obj.width(),
+      .height = obj.height(),
+      .format = static_cast<u32>(obj.format()),
+  }];
+  entry.lastUsedFrame = s_frameCount;
+  if (!entry.handle) {
+    entry.handle = gfx::new_conv_texture(obj.width(), obj.height(), GX_TF_RGBA8, "GX Reinterpreted Copy");
+  }
+  if (!entry.converted || entry.sourceRevision != source.revision) {
+    gfx::queue_reinterpret_conv({
+        .source = sourceKind,
+        .target = targetKind,
+        .sourceWidth = source.width,
+        .sourceHeight = source.height,
+        .targetWidth = obj.width(),
+        .targetHeight = obj.height(),
+        .src = source.handle,
+        .dst = entry.handle,
+    });
+    entry.sourceRevision = source.revision;
+    entry.converted = true;
+  }
+  return entry.handle;
+}
+
 gfx::TextureHandle resolve_dynamic_palette_texture(const GXTexObj_& obj, const GXState::CopyTextureRef& source,
                                                    const GXTlutObj_& tlut) {
   ZoneScoped;
@@ -483,6 +532,14 @@ void sweep_object_caches() {
       s_tlutObjectCaches.erase(cacheIt++);
     } else {
       ++cacheIt;
+    }
+  }
+
+  for (auto it = s_reinterpretedCopies.begin(); it != s_reinterpretedCopies.end();) {
+    if (expired(it->second.lastUsedFrame)) {
+      s_reinterpretedCopies.erase(it++);
+    } else {
+      ++it;
     }
   }
 }
@@ -854,7 +911,7 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
         }
       }
     } else if (copyRef != nullptr) {
-      handle = copyRef->handle;
+      handle = resolve_copy_for_object(obj, *copyRef);
     } else if (obj.has_data()) {
       handle = texture::resolve_static_texture(obj);
     }

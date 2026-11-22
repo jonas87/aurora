@@ -7,6 +7,7 @@
 #include "readback/gpu.hpp"
 #include "tex_copy_conv.hpp"
 #include "tex_palette_conv.hpp"
+#include "tex_reinterpret_conv.hpp"
 #include "../gx/gx.hpp"
 #include "../gx/pipeline.hpp"
 #ifdef AURORA_ENABLE_RMLUI
@@ -193,6 +194,9 @@ void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo,
 
   for (const auto& conv : passInfo.paletteConvs) {
     tex_palette_conv::run(cmd, conv);
+  }
+  for (const auto& conv : passInfo.reinterpretConvs) {
+    tex_reinterpret_conv::run(cmd, conv);
   }
   if (passInfo.discardable) {
     // This pass has no effect and can be safely discarded (e.g. an empty EFB segment between two back-to-back pass

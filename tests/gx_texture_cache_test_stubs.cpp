@@ -1,7 +1,9 @@
 #include "gx/texture.hpp"
 
+#include "gfx/recording.hpp"
 #include "gfx/tex_palette_conv.hpp"
 #include "gfx/tex_copy_conv.hpp"
+#include "gfx/tex_reinterpret_conv.hpp"
 #include "gfx/texture_convert.hpp"
 #include "gfx/texture_replacement.hpp"
 #include "internal.hpp"
@@ -119,11 +121,17 @@ ConvertedTexture convert_texture_palette(u32 textureFormat, uint32_t width, uint
 GXTexFmt tlut_texture_format(GXTlutFmt format) noexcept { return GX_TF_RGBA8_PC; }
 
 void queue_palette_conv(tex_palette_conv::ConvRequest req) { ++s_paletteConversions; }
+void queue_reinterpret_conv(tex_reinterpret_conv::ConvRequest req) {}
 } // namespace aurora::gfx
 
 namespace aurora::gfx::tex_copy_conv {
 bool needs_conversion(GXTexFmt format) { return format != GX_TF_RGBA8; }
 } // namespace aurora::gfx::tex_copy_conv
+
+namespace aurora::gfx::tex_reinterpret_conv {
+// Texture objects read copies as they are: no reinterpretation.
+bool plan(GXTexFmt copyFormat, GXTexFmt textureFormat, Source& source, Target& target) { return false; }
+} // namespace aurora::gfx::tex_reinterpret_conv
 
 namespace aurora::gfx::texture_replacement {
 StreamingStats process_streaming() noexcept { return {}; }

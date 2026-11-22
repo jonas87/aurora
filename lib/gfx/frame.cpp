@@ -7,6 +7,7 @@
 #include "resource_cache.hpp"
 #include "tex_copy_conv.hpp"
 #include "tex_palette_conv.hpp"
+#include "tex_reinterpret_conv.hpp"
 #include "texture_replacement.hpp"
 #include "../gx/gx.hpp"
 #ifdef AURORA_ENABLE_RMLUI
@@ -402,6 +403,7 @@ void initialize() {
   readback::initialize();
   tex_copy_conv::initialize();
   tex_palette_conv::initialize();
+  tex_reinterpret_conv::initialize();
 
   // For uniform & storage buffer offset alignments
   g_device.GetLimits(&g_resources.limits);
@@ -542,6 +544,7 @@ void shutdown() {
   readback::shutdown();
   tex_copy_conv::shutdown();
   tex_palette_conv::shutdown();
+  tex_reinterpret_conv::shutdown();
   texture_replacement::shutdown();
   gx::shutdown();
 #ifdef AURORA_ENABLE_RMLUI
