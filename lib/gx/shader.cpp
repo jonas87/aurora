@@ -934,6 +934,9 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
 
   // Load points for line/point expansion
   std::string_view vidxAttr = "vidx"sv;
+  if (config.coplanar) {
+    uniBufAttrs += "\n    coplanar_plane: vec4f,";
+  }
   if (config.lineMode != 0) {
     vtxInAttrs += ",\n    @builtin(instance_index) iidx: u32";
     uniBufAttrs +=
@@ -1009,6 +1012,14 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
         "\n    let mv_pos = vec4f({}, 1.0) * ubuf.postex_mtx[in_pnmtxidx];"
         "\n    out.pos = vec4f(mv_pos, 1.0) * ubuf.proj;",
         vtx_attr(config, GX_VA_POS));
+    if (config.coplanar) {
+      // ZFreeze: the depth of the plane latched from the last triangle culled by GX_CULL_ALL, at the
+      // vertex's position on screen. Depth is linear on screen, so the triangle's depth is the plane.
+      vtxXfrAttrsPre +=
+          "\n    let coplanar_ndc = out.pos.xy / out.pos.w;"
+          "\n    out.pos.z = (ubuf.coplanar_plane.x * coplanar_ndc.x + ubuf.coplanar_plane.y * coplanar_ndc.y +"
+          " ubuf.coplanar_plane.z) * out.pos.w;";
+    }
   } else if (config.lineMode == 3) {
     // GX_POINTS: expand single vertex to axis-aligned screen-space square
     vtxXfrAttrsPre +=

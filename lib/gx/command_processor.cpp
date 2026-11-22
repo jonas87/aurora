@@ -13,6 +13,7 @@
 
 #include <tracy/Tracy.hpp>
 
+#include <bit>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -510,6 +511,133 @@ static constexpr u16 trunc_vtx_count(GXPrimitive prim, u16 vtxCount) noexcept {
   }
 }
 
+// ZFreeze: latches the depth plane of a triangle culled by GX_CULL_ALL from its first three
+// vertices, as the hardware does for the co-planar triangles that follow (GXSetCoPlanar). The
+// positions are transformed as the vertex shader transforms them, by the current position matrix
+// and the projection as uploaded, and the plane is taken in normalised device coordinates. Only
+// direct positions are read, after any direct matrix indices; other layouts leave the plane as it
+// was.
+static float read_position_component(const u8* data, GXCompType type, u8 frac) noexcept {
+  float value = 0.f;
+  switch (type) {
+  case GX_U8:
+    value = static_cast<float>(data[0]);
+    break;
+  case GX_S8:
+    value = static_cast<float>(static_cast<s8>(data[0]));
+    break;
+  case GX_U16:
+    value = static_cast<float>(static_cast<u16>((data[0] << 8) | data[1]));
+    break;
+  case GX_S16:
+    value = static_cast<float>(static_cast<s16>((data[0] << 8) | data[1]));
+    break;
+  case GX_F32: {
+    const u32 bits = (static_cast<u32>(data[0]) << 24) | (static_cast<u32>(data[1]) << 16) |
+                     (static_cast<u32>(data[2]) << 8) | data[3];
+    return std::bit_cast<float>(bits);
+  }
+  default:
+    return 0.f;
+  }
+  return value / static_cast<float>(1u << frac);
+}
+
+static void latch_coplanar_plane(GXVtxFmt fmt, std::span<const u8> vertexData, u32 vtxSize,
+                                 u16 vtxCount) noexcept {
+  if (vtxCount < 3 || g_gxState.vtxDesc[GX_VA_POS] != GX_DIRECT) {
+    return;
+  }
+  u32 offset = 0;
+  for (u32 attr = GX_VA_PNMTXIDX; attr <= GX_VA_TEX7MTXIDX; ++attr) {
+    if (g_gxState.vtxDesc[attr] == GX_DIRECT) {
+      ++offset;
+    }
+  }
+  const auto& attrFmt = g_gxState.vtxFmts[fmt].attrs[GX_VA_POS];
+  u32 size = 0;
+  switch (attrFmt.type) {
+  case GX_U8:
+  case GX_S8:
+    size = 1;
+    break;
+  case GX_U16:
+  case GX_S16:
+    size = 2;
+    break;
+  case GX_F32:
+    size = 4;
+    break;
+  default:
+    return;
+  }
+  const u32 count = attrFmt.cnt == GX_POS_XYZ ? 3 : 2;
+  if (offset + count * size > vtxSize) {
+    return;
+  }
+
+  const u32 matrixIndex = g_gxState.currentPnMtx;
+  Mat3x4<float> matrix{Vec4{1.f, 0.f, 0.f, 0.f}, Vec4{0.f, 1.f, 0.f, 0.f}, Vec4{0.f, 0.f, 1.f, 0.f}};
+  if (matrixIndex < MaxPnMtx) {
+    matrix = g_gxState.pnMtx[matrixIndex].pos;
+  }
+  auto proj = g_gxState.proj;
+  if constexpr (UseReversedZ) {
+    proj.m2 = proj.m2 * Vec4{-1.f, -1.f, -1.f, -1.f};
+  } else {
+    proj.m2 = proj.m2 + proj.m3;
+  }
+
+  float x[3];
+  float y[3];
+  float z[3];
+  for (u32 v = 0; v < 3; ++v) {
+    const u8* data = vertexData.data() + v * vtxSize + offset;
+    float pos[3] = {0.f, 0.f, 0.f};
+    for (u32 k = 0; k < count; ++k) {
+      pos[k] = read_position_component(data + k * size, attrFmt.type, attrFmt.frac);
+    }
+    const Vec4<float>* rows[3] = {&matrix.m0, &matrix.m1, &matrix.m2};
+    float view[4];
+    for (u32 r = 0; r < 3; ++r) {
+      const auto& row = *rows[r];
+      view[r] = row[0] * pos[0] + row[1] * pos[1] + row[2] * pos[2] + row[3];
+    }
+    view[3] = 1.f;
+    float clip[4];
+    for (u32 r = 0; r < 4; ++r) {
+      const auto& row = proj[r];
+      clip[r] = row[0] * view[0] + row[1] * view[1] + row[2] * view[2] + row[3] * view[3];
+    }
+    if (clip[3] == 0.f) {
+      return;
+    }
+    x[v] = clip[0] / clip[3];
+    y[v] = clip[1] / clip[3];
+    z[v] = clip[2] / clip[3];
+  }
+
+  // z = a * x + b * y + c through the three points; a constant depth if they are collinear on
+  // screen.
+  const float dx1 = x[1] - x[0];
+  const float dy1 = y[1] - y[0];
+  const float dz1 = z[1] - z[0];
+  const float dx2 = x[2] - x[0];
+  const float dy2 = y[2] - y[0];
+  const float dz2 = z[2] - z[0];
+  const float det = dx1 * dy2 - dx2 * dy1;
+  float a = 0.f;
+  float b = 0.f;
+  if (std::abs(det) > 1e-12f) {
+    a = (dz1 * dy2 - dz2 * dy1) / det;
+    b = (dx1 * dz2 - dx2 * dz1) / det;
+  }
+  const float c = z[0] - a * x[0] - b * y[0];
+  g_gxState.coplanarPlane = Vec4{a, b, c, 0.f};
+  g_gxState.coplanarPlaneValid = true;
+  g_gxState.dirty |= DirtyPipeline | DirtyUniform;
+}
+
 static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, ByteReader& reader) noexcept {
   ZoneScoped;
   u32 vtxSize;
@@ -526,6 +654,13 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, ByteReader& 
   vtxCount = trunc_vtx_count(prim, vtxCount);
   if (vtxCount == 0)
     UNLIKELY { return; }
+
+  // GX_CULL_ALL draws no triangle; the first one's depth plane is latched for co-planar draws.
+  if (g_gxState.cullMode == GX_CULL_ALL && prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS)
+    UNLIKELY {
+      latch_coplanar_plane(fmt, vertexData, vtxSize, vtxCount);
+      return;
+    }
 
   const bool cleanState = g_gxState.dirty == 0 && fmt == sDrawCache.lastDrawFmt && sDrawCache.lineMode == 0 &&
                           prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS;

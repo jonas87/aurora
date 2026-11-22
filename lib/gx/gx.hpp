@@ -340,6 +340,12 @@ struct GXState {
   GXProjectionType projType; // for GXGetProjectionv
   FogState fog;
   GXCullMode cullMode = GX_CULL_BACK;
+  // ZFreeze: GXSetCoPlanar's flag, and the depth plane of the last triangle culled by GX_CULL_ALL as
+  // z = a * x + b * y + c in normalised device coordinates (a, b, c in x, y, z), which co-planar
+  // triangles take for their depth.
+  bool coplanar = false;
+  bool coplanarPlaneValid = false;
+  Vec4<float> coplanarPlane{};
   u8 lineWidth = 0;
   u8 pointSize = 0;
   GXTexOffset lineTexOffset = GX_TO_ZERO;
@@ -506,7 +512,8 @@ struct ShaderConfig {
   u8 vtxStride = 0;
   u8 lineMode : 2 = 0; // 1 = GX_LINES, 2 = GX_LINESTRIP, 3 = GX_POINTS
   u8 fogRangeEnabled : 1 = false;
-  u8 pad1 : 5 = 0;
+  u8 coplanar : 1 = false; // depth from the latched co-planar plane (ZFreeze)
+  u8 pad1 : 4 = 0;
   u8 pad2 = 0;
   std::array<AttrConfig, MaxVtxAttr> attrs;
   std::array<TevSwap, MaxTevSwap> tevSwapTable;
@@ -545,6 +552,7 @@ struct ShaderInfo {
   bool usesFog : 1 = false;
   bool lightingEnabled : 1 = false;
   u8 lineMode : 2 = 0;
+  bool coplanar : 1 = false;
 };
 struct BindGroupRanges {
   std::array<gfx::Range, MaxIndexAttr> vaRanges{};

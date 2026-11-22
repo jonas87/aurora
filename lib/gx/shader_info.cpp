@@ -237,6 +237,10 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
       .uniformSize = 8 + 8 + 64,
   };
 
+  if (config.coplanar) {
+    info.uniformSize += sizeof(Vec4<float>); // coplanar_plane
+    info.coplanar = true;
+  }
   if (config.lineMode != 0) {
     info.uniformSize += 4 + 4 + 4 + 4; // line_width, line_aspect_y, line_tex_offset, line_texcoord_mask
     info.lineMode = config.lineMode;
@@ -476,6 +480,9 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
   buf.append<f32>(g_gxState.renderViewport.height);
   buf.append<f32>(g_gxState.logicalViewport.width);
   buf.append<f32>(g_gxState.logicalViewport.height);
+  if (info.coplanar) {
+    buf.append(g_gxState.coplanarPlane);
+  }
   if (info.lineMode != 0) {
     if (info.lineMode == 3) { // GX_POINTS
       buf.append<f32>(static_cast<f32>(g_gxState.pointSize) / 6.f);

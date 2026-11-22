@@ -209,6 +209,10 @@ wgpu::PrimitiveState to_primitive_state(GXCullMode gx_cullMode) {
     break;
   case GX_CULL_NONE:
     break;
+  case GX_CULL_ALL:
+    // Culled triangles are not drawn (the command processor latches their depth plane instead);
+    // the pipeline needs no cull state for them.
+    break;
   }
   return {
       .topology = wgpu::PrimitiveTopology::TriangleList,
@@ -459,6 +463,8 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
   if (g_gxState.alphaCompare) {
     config.shaderConfig.alphaCompare = g_gxState.alphaCompare;
   }
+  config.shaderConfig.coplanar =
+      config.shaderConfig.lineMode == 0 && g_gxState.coplanar && g_gxState.coplanarPlaneValid;
   const auto cullMode = config.shaderConfig.lineMode == 0 ? g_gxState.cullMode : GX_CULL_NONE;
   const auto [polygonOffset, polygonOffsetScale] = polygon_offset_for_cull_mode(cullMode);
   const bool hasAlpha = efb_has_alpha(g_gxState.pixelFmt);
