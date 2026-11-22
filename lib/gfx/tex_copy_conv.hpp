@@ -17,7 +17,10 @@ struct alignas(16) Uniforms {
   Vec2<float> offset;
   Vec2<float> scale{1.f, 1.f};
   uint32_t opaqueAlpha = 0;
-  std::array<uint32_t, 3> _pad{};
+  // The box filter: 0 for none, else the source pixels per side each texel averages; the size of
+  // a source pixel in texture coordinates.
+  uint32_t boxTaps = 0;
+  Vec2<float> srcTexel;
 };
 static_assert(sizeof(Uniforms) == 32);
 

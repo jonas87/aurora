@@ -232,7 +232,7 @@ std::atomic<uint32_t> offscreenHeight{0};
 
 void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
                        Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat,
-                       GXPixelFmt sourceFormat) {
+                       GXPixelFmt sourceFormat, uint32_t boxFilterTaps) {
   testing::resolvePassCount.fetch_add(1, std::memory_order_release);
 }
 void copy_disp(ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth, Vec4<float> clearColorValue,

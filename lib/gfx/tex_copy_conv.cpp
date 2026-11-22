@@ -29,6 +29,8 @@ struct Uniforms {
     offset: vec2f,
     scale: vec2f,
     opaqueAlpha: u32,
+    boxTaps: u32,
+    srcTexel: vec2f,
 };
 @group(0) @binding(2) var<uniform> ubuf: Uniforms;
 
@@ -56,7 +58,26 @@ var<private> uvs: array<vec2f, 3> = array(
 }
 
 fn sample_efb(uv: vec2f) -> vec4f {
-    let c = textureSample(src, src_samp, uv);
+    var c: vec4f;
+    if (ubuf.boxTaps == 0u) {
+        c = textureSampleLevel(src, src_samp, uv, 0.0);
+    } else {
+        // The box filter: the average of the boxTaps x boxTaps source pixels centred on the texel. At a
+        // render scale the footprint is wider than the texels' spacing, so the samples are kept to the
+        // copy's own pixels: an edge texel does not read the EFB beside the copy.
+        let n = ubuf.boxTaps;
+        let first = (f32(n) - 1.0) * 0.5;
+        let lo = ubuf.offset + 0.5 * ubuf.srcTexel;
+        let hi = ubuf.offset + ubuf.scale - 0.5 * ubuf.srcTexel;
+        var sum = vec4f(0.0);
+        for (var j = 0u; j < n; j++) {
+            for (var i = 0u; i < n; i++) {
+                let offset = (vec2f(f32(i), f32(j)) - vec2f(first)) * ubuf.srcTexel;
+                sum += textureSampleLevel(src, src_samp, clamp(uv + offset, lo, hi), 0.0);
+            }
+        }
+        c = sum / f32(n * n);
+    }
     return vec4f(c.rgb, select(c.a, 1.0, ubuf.opaqueAlpha != 0u));
 }
 

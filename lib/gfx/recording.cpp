@@ -1050,7 +1050,7 @@ static void resume_pass_after_copy(const RenderPass& prevPass, ClipRect rect, bo
 
 void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
                        Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat,
-                       GXPixelFmt sourceFormat) {
+                       GXPixelFmt sourceFormat, uint32_t boxFilterTaps) {
   // Resolve current render pass
   auto& prevPass = current_render_passes()[g_recorder.currentRenderPass];
   prevPass.resolveTarget = std::move(texture);
@@ -1063,6 +1063,8 @@ void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bo
       .offset = {static_cast<float>(rect.x) / srcW, static_cast<float>(rect.y) / srcH},
       .scale = {static_cast<float>(rect.width) / srcW, static_cast<float>(rect.height) / srcH},
       .opaqueAlpha = !gx::efb_has_alpha(sourceFormat),
+      .boxTaps = boxFilterTaps,
+      .srcTexel = {1.f / srcW, 1.f / srcH},
   };
   prevPass.resolveUniformRange = push_uniform(uniforms);
   enqueue_pass(current_frame_packet(), g_recorder.currentRenderPass);

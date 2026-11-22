@@ -113,9 +113,11 @@ DrawData* get_last_draw_command();
 template <typename PipelineConfig>
 PipelineRef pipeline_ref(const PipelineConfig& config);
 
+// boxFilterTaps: 0 for a plain copy, else the number of source pixels per side that each texel
+// averages (the copy's box filter).
 void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
                        Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat,
-                       GXPixelFmt sourceFormat);
+                       GXPixelFmt sourceFormat, uint32_t boxFilterTaps = 0);
 void copy_disp(ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth, Vec4<float> clearColorValue,
                float clearDepthValue);
 void clear_rect(ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth, Vec4<float> clearColorValue,
