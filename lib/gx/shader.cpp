@@ -1220,9 +1220,22 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
         vtxXfrAttrs += fmt::format("\n    var tc{0}_tmp = tc{0} * ubuf.postex_mtx[in_texmtxidx{0} / 3u];", i);
       } else if (tcg.mtx == GX_IDENTITY) {
         vtxXfrAttrs += fmt::format("\n    var tc{0}_tmp = tc{0}.xyz;", i);
-      } else {
+      } else if (tcg.mtx % 3 == 0) {
         u32 texMtxIdx = (tcg.mtx) / 3;
         vtxXfrAttrs += fmt::format("\n    var tc{0}_tmp = tc{0} * ubuf.postex_mtx[{1}];", i, texMtxIdx);
+      } else {
+        // The matrix starts within a position or texture matrix: matrix memory is addressed by
+        // row, and a texture matrix ID is its first row. Row r is column r % 3 of postex_mtx[r / 3];
+        // rows past the end of matrix memory read as zero.
+        const auto rowDot = [&](u32 row) {
+          if (row >= (MaxPnMtx + MaxTexMtx) * 3) {
+            return std::string{"0.0"};
+          }
+          return fmt::format("dot(tc{}, ubuf.postex_mtx[{}][{}])", i, row / 3, row % 3);
+        };
+        const u32 first = tcg.mtx;
+        vtxXfrAttrs += fmt::format("\n    var tc{}_tmp = vec3f({}, {}, {});", i, rowDot(first), rowDot(first + 1),
+                                   tcg.type == GX_TG_MTX2x4 ? std::string{"1.0"} : rowDot(first + 2));
       }
       if (tcg.type == GX_TG_MTX2x4) {
         vtxXfrAttrs += fmt::format("\n    tc{0}_tmp.z = 1.0f;", i);

@@ -99,8 +99,8 @@ void GXSetCurrentMtx(u32 id) {
 }
 
 void GXLoadTexMtxImm(const void* mtx_, u32 id, GXTexMtxType type) {
-  CHECK((id >= GX_TEXMTX0 && id <= GX_IDENTITY) || (id >= GX_PTTEXMTX0 && id <= GX_PTIDENTITY), "invalid tex mtx {}",
-        id);
+  // Any row of matrix memory can hold a texture matrix, position-matrix memory included.
+  CHECK(id <= GX_IDENTITY || (id >= GX_PTTEXMTX0 && id <= GX_PTIDENTITY), "invalid tex mtx {}", id);
 
   u32 addr;
   if (id >= GX_PTTEXMTX0) {
