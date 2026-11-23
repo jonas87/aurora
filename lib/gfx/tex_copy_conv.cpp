@@ -632,7 +632,9 @@ void shutdown() {
   g_depthSnapshotPipelineMS = {};
 }
 
-static void execute(const wgpu::CommandEncoder& cmd, const ConvRequest& req, const wgpu::RenderPipeline& pipeline) {
+// Draws the conversion into dst: the whole target, cleared, or only dstRect over its contents.
+static void execute(const wgpu::CommandEncoder& cmd, const ConvRequest& req, const wgpu::RenderPipeline& pipeline,
+                    const wgpu::TextureView& dst, const ClipRect* dstRect) {
   if (!pipeline) {
     return;
   }
@@ -688,8 +690,8 @@ static void execute(const wgpu::CommandEncoder& cmd, const ConvRequest& req, con
 
   const std::array colorAttachments{
       wgpu::RenderPassColorAttachment{
-          .view = req.dst->attachmentTextureView,
-          .loadOp = wgpu::LoadOp::Clear,
+          .view = dst,
+          .loadOp = dstRect != nullptr ? wgpu::LoadOp::Load : wgpu::LoadOp::Clear,
           .storeOp = wgpu::StoreOp::Store,
           .clearValue = {0.0, 0.0, 0.0, 0.0},
       },
@@ -703,6 +705,12 @@ static void execute(const wgpu::CommandEncoder& cmd, const ConvRequest& req, con
   const auto pass = cmd.BeginRenderPass(&renderPassDescriptor);
   pass.SetPipeline(pipeline);
   pass.SetBindGroup(0, bindGroup);
+  if (dstRect != nullptr) {
+    pass.SetViewport(static_cast<float>(dstRect->x), static_cast<float>(dstRect->y), static_cast<float>(dstRect->width),
+                     static_cast<float>(dstRect->height), 0.f, 1.f);
+    pass.SetScissorRect(static_cast<uint32_t>(dstRect->x), static_cast<uint32_t>(dstRect->y),
+                        static_cast<uint32_t>(dstRect->width), static_cast<uint32_t>(dstRect->height));
+  }
   pass.Draw(3);
   pass.End();
 }
@@ -712,10 +720,20 @@ void run(const wgpu::CommandEncoder& cmd, const ConvRequest& req) {
   if (it == g_pipelines.end()) {
     Log.fatal("No copy conversion pipeline for format {}", static_cast<int>(req.fmt));
   }
-  execute(cmd, req, it->second);
+  execute(cmd, req, it->second, req.dst->attachmentTextureView, nullptr);
 }
 
-void blit(const wgpu::CommandEncoder& cmd, const ConvRequest& req) { execute(cmd, req, g_blitPipeline); }
+void blit(const wgpu::CommandEncoder& cmd, const ConvRequest& req) {
+  execute(cmd, req, g_blitPipeline, req.dst->attachmentTextureView, nullptr);
+}
+
+void blit_rect(const wgpu::CommandEncoder& cmd, const ConvRequest& req, const wgpu::TextureView& dst,
+               const ClipRect& dstRect) {
+  if (dstRect.width <= 0 || dstRect.height <= 0) {
+    return;
+  }
+  execute(cmd, req, g_blitPipeline, dst, &dstRect);
+}
 
 bool snapshot_depth_supported() noexcept { return static_cast<bool>(g_depthSnapshotPipeline); }
 

@@ -12,6 +12,29 @@
 #include <cmath>
 
 namespace {
+// The lines a display copy of height source lines writes at the Y scale register's value scale.
+u32 get_num_xfb_lines(u32 height, u32 scale) {
+  if (height == 0 || scale == 0) {
+    return 0;
+  }
+  u32 actualHeight = (height - 1) * 0x100 / scale + 1;
+
+  u32 newScale = scale;
+  if (newScale > 0x80 && newScale < 0x100) {
+    while (newScale % 2 == 0) {
+      newScale /= 2;
+    }
+    if (height % newScale == 0) {
+      actualHeight++;
+    }
+  }
+
+  if (actualHeight > 0x400) {
+    actualHeight = 0x400;
+  }
+  return actualHeight;
+}
+
 aurora::Vec2<uint32_t> scale_copy_dst(u32 logicalWidth, u32 logicalHeight) {
   if (g_gxState.viewportPolicy == AURORA_VIEWPORT_NATIVE) {
     return {logicalWidth, logicalHeight};
@@ -61,16 +84,50 @@ void copy_tex(const void* dest, GXBool clear) noexcept {
                          clear_depth_value(), texCopyFmt, g_gxState.pixelFmt, boxFilterTaps);
 }
 
-void copy_disp(GXBool clear) noexcept {
+void copy_disp(GXBool clear, bool yScale) noexcept {
   if (!g_config.emulateXfb) {
     return;
   }
 
-  const auto rect = map_logical_scissor(g_gxState.dispCopySrc);
+  const auto& src = g_gxState.dispCopySrc;
+  const auto rect = map_logical_scissor(src);
+  const auto srcWidth = static_cast<u32>(std::max(src.width, 0));
+  const auto srcHeight = static_cast<u32>(std::max(src.height, 0));
+
+  // The destination's line pitch (BP 0x4D, in 32-byte units), and the lines the copy writes at its
+  // Y scale (BP 0x4E, 256 over the scale), when the copy enables it.
+  u32 stride = (srcWidth + 15) / 16 * 32;
+  if (g_gxState.bpRegValid.test(0x4D)) {
+    stride = (g_gxState.bpRegCache[0x4D] & 0x3FF) * 32;
+  }
+  u32 lines = srcHeight;
+  if (yScale && g_gxState.bpRegValid.test(0x4E)) {
+    const u32 scale = g_gxState.bpRegCache[0x4E] & 0x1FF;
+    if (scale != 0 && scale != 0x100 && srcHeight != 0) {
+      lines = get_num_xfb_lines(srcHeight, scale);
+    }
+  }
+
+  // Render target pixels per frame buffer pixel: the EFB's scale.
+  Vec2<float> scale{1.f, 1.f};
+  if (srcWidth != 0 && srcHeight != 0) {
+    const auto [physicalWidth, physicalHeight] = scale_copy_dst(srcWidth, srcHeight);
+    scale = {static_cast<float>(physicalWidth) / static_cast<float>(srcWidth),
+             static_cast<float>(physicalHeight) / static_cast<float>(srcHeight)};
+  }
+
+  const gfx::XfbCopy xfb{
+      .dest = reinterpret_cast<uintptr_t>(g_gxState.texCopyDest),
+      .stride = stride,
+      .lines = lines,
+      .fbLines = vi::configured_xfb_lines(),
+      .scaled = lines != srcHeight,
+      .scale = scale,
+  };
   const auto clearColor = clear && g_gxState.colorUpdate;
   const auto clearAlpha = clear && g_gxState.alphaUpdate && efb_has_alpha(g_gxState.pixelFmt);
   const auto clearDepth = clear && g_gxState.depthUpdate;
-  gfx::copy_disp(rect, clearColor, clearAlpha, clearDepth, g_gxState.clearColor, clear_depth_value());
+  gfx::copy_disp(rect, xfb, clearColor, clearAlpha, clearDepth, g_gxState.clearColor, clear_depth_value());
 }
 
 void clear_efb(const gfx::ClipRect& logicalRect, bool wholeTarget, bool clearColor, bool clearAlpha, bool clearDepth,
@@ -178,6 +235,7 @@ void GXAdjustForOverscan(GXRenderModeObj* rmin, GXRenderModeObj* rmout, u16 hor,
 }
 
 void GXSetDispCopySrc(u16 left, u16 top, u16 wd, u16 ht) {
+  __gx->cpDispHeight = ht;
   GX_WRITE_AURORA(GX_AURORA_LOAD_DISP_COPY_SRC);
   GX_WRITE_U32(left);
   GX_WRITE_U32(top);
@@ -193,7 +251,13 @@ void GXSetTexCopySrc(u16 left, u16 top, u16 wd, u16 ht) {
   GX_WRITE_U32(ht);
 }
 
-void GXSetDispCopyDst(u16 wd, u16 ht) {}
+void GXSetDispCopyDst(u16 wd, u16 ht) {
+  // The line pitch in 32-byte units: sixteen pixels of two bytes each.
+  u32 reg = 0;
+  SET_REG_FIELD(0, reg, 10, 0, wd >> 4);
+  SET_REG_FIELD(0, reg, 8, 24, 0x4D);
+  __gx->cpDispStride = reg;
+}
 
 void GXSetTexCopyDst(u16 wd, u16 ht, GXTexFmt fmt, GXBool mipmap) {
   GX_WRITE_AURORA(GX_AURORA_LOAD_COPY_DST);
@@ -207,7 +271,16 @@ void GXSetDispCopyFrame2Field(GXCopyMode mode) {}
 
 void GXSetCopyClamp(GXFBClamp clamp) {}
 
-u32 GXSetDispCopyYScale(f32 vscale) { return 0; }
+u32 GXSetDispCopyYScale(f32 vscale) {
+  const u32 scale = static_cast<u32>(256.0f / vscale) & 0x1FF;
+  u32 reg = 0;
+  SET_REG_FIELD(0, reg, 9, 0, scale);
+  SET_REG_FIELD(0, reg, 8, 24, 0x4E);
+  GX_WRITE_RAS_REG(reg);
+  __gx->cpDispYScale = scale != 0x100;
+  __gx->bpSent = 1;
+  return get_num_xfb_lines(__gx->cpDispHeight, scale);
+}
 
 void GXSetCopyClear(GXColor color, u32 depth) {
   // BP 0x4F: clear color R + A
@@ -237,7 +310,14 @@ void GXSetCopyFilter(GXBool aa, const u8 sample_pattern[12][2], GXBool vf, const
 void GXSetDispCopyGamma(GXGamma gamma) {}
 
 void GXCopyDisp(void* dest, GXBool clear) {
+  if (__gx->cpDispStride != 0) {
+    GX_WRITE_RAS_REG(__gx->cpDispStride);
+  }
+  GX_WRITE_AURORA(GX_AURORA_LOAD_COPY_DEST);
+  GX_WRITE_U64(reinterpret_cast<u64>(dest));
+
   u32 reg = 0;
+  SET_REG_FIELD(0, reg, 1, 10, __gx->cpDispYScale != 0);
   SET_REG_FIELD(0, reg, 1, 11, clear != GX_FALSE);
   SET_REG_FIELD(0, reg, 1, 14, 1);
   SET_REG_FIELD(0, reg, 8, 24, 0x52);
@@ -254,25 +334,6 @@ void GXCopyTex(void* dest, GXBool clear) {
   SET_REG_FIELD(0, __gx->cpTex, 8, 24, 0x52);
   GX_WRITE_RAS_REG(__gx->cpTex);
   aurora::gx::fifo::publish();
-}
-
-static u32 get_num_xfb_lines(u32 height, u32 scale) {
-  u32 actualHeight = (height - 1) * 0x100 / scale + 1;
-
-  u32 newScale = scale;
-  if (newScale > 0x80 && newScale < 0x100) {
-    while (newScale % 2 == 0) {
-      newScale /= 2;
-    }
-    if (height % newScale == 0) {
-      actualHeight++;
-    }
-  }
-
-  if (actualHeight > 0x400) {
-    actualHeight = 0x400;
-  }
-  return actualHeight;
 }
 
 f32 GXGetYScaleFactor(u16 efbHeight, u16 xfbHeight) {

@@ -142,6 +142,9 @@ void destroy_stream(StreamHandle stream);
 bool valid_stream(StreamHandle stream) noexcept;
 uint64_t next_sequence(StreamHandle stream) noexcept; // 0 if invalid
 bool capture_color(StreamHandle stream, uint64_t key = 0, uint32_t* width = nullptr, uint32_t* height = nullptr);
+// Reads back the emulated XFB that the frame's end presents, as the display copies so far have
+// composed it.
+bool capture_xfb(StreamHandle stream, uint64_t key = 0, uint32_t* width = nullptr, uint32_t* height = nullptr);
 void copy_bgra_to_rgba(uint8_t* dst, const uint8_t* src, size_t pixels) noexcept;
 void copy_color_rows(uint8_t* dst, const uint8_t* src, size_t width, size_t height, size_t rowPitch,
                      bool bgra) noexcept;

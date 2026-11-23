@@ -127,6 +127,9 @@ struct __GXData_struct {
   u32 zmode;        // Z-buffer mode register
   u32 peCtrl;       // pixel engine control
   u32 cpTex;        // copy texture trigger register
+  u32 cpDispStride; // display copy destination stride register
+  u16 cpDispHeight; // display copy source height
+  u8 cpDispYScale;  // display copy scales vertically
   GXAlphaReadMode alphaRead; // PE alpha read mode
 
   u32 genMode;      // general mode (numTexGens, numChans, numTevStages, cullMode, numIndStages)

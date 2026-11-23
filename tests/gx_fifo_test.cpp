@@ -2693,6 +2693,13 @@ TEST_F(GXFifoTest, ScissorBoxOffset_MovesScissorAndViewportIntoTheEfb) {
   EXPECT_FLOAT_EQ(g_gxState.logicalViewport.top, 0.0f);
 }
 
+TEST_F(GXFifoTest, DispCopyYScale_ReturnsTheLinesTheCopyWrites) {
+  GXSetDispCopySrc(0, 16, 640, 226);
+  // 256 / 1.1066667 is 231 in the register: (226 - 1) * 256 / 231 + 1 lines.
+  EXPECT_EQ(GXSetDispCopyYScale(1.1066667f), 250u);
+  EXPECT_EQ(GXSetDispCopyYScale(1.0f), 226u);
+}
+
 TEST_F(GXFifoTest, GetViewportShadowState) {
   f32 vp[6]{};
 

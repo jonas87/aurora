@@ -291,7 +291,7 @@ void bp_clear_depth(u8, u32 value) noexcept { g_gxState.clearDepth = reg_get(val
 void bp_efb_copy(u8, u32 value) noexcept {
   const bool clear = reg_get(value, 1, 11) != 0;
   if (reg_get(value, 1, 14) != 0) {
-    copy_disp(clear);
+    copy_disp(clear, reg_get(value, 1, 10) != 0);
   } else {
     copy_tex(g_gxState.texCopyDest, clear);
   }
@@ -556,6 +556,8 @@ constexpr auto kBpRegs = [] {
   regs[0x41] = {bp_cmode0, DirtyPipeline};
   regs[0x42] = {bp_cmode1, DirtyPipeline};
   regs[0x43] = {bp_pe_ctrl, DirtyPipeline};
+  regs[0x4D] = {}; // Copy destination stride; the display copy reads it from shadow
+  regs[0x4E] = {}; // Display copy Y scale; the display copy reads it from shadow
   regs[0x4F] = {bp_clear_ra};
   regs[0x50] = {bp_clear_bg};
   regs[0x51] = {bp_clear_depth};
