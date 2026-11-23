@@ -755,15 +755,9 @@ enum class NbtSlice : u8 {
 auto attr_load_nbt_slice(const ShaderConfig& config, NbtSlice slice, std::string_view vidx) -> std::string {
   const auto& mapping = config.attrs[GX_VA_NRM];
   if (mapping.attrType == GX_NONE || mapping.cnt != 9) {
-    // The vertex carries no binormal and tangent: the slice reads as zero. What the hardware's
-    // transform unit reads in this case is not established.
-    static std::atomic_bool warned = false;
-    if (!warned.exchange(true)) {
-      Log.warn("attr_load_nbt_slice: GX_TG_BINRM/TANGENT without GX_NRM_NBT or GX_NRM_NBT3 (normal "
-               "attribute type {}, count {}); the binormal and tangent read as zero",
-               static_cast<int>(mapping.attrType), static_cast<int>(mapping.cnt));
-    }
-    return "vec3<f32>(0.0)";
+    // The vertex carries no binormal and tangent: the transform unit reads the ones it kept from
+    // the last vertex that had them (latch_nbt in the command processor).
+    return slice == NbtSlice::B ? "ubuf.latched_binrm.xyz" : "ubuf.latched_tangent.xyz";
   }
   const auto sliceIdx = static_cast<u32>(slice);
   const auto compsize = comp_type_size(GX_VA_NRM, static_cast<GXCompType>(mapping.compType));
@@ -948,6 +942,11 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
   std::string_view vidxAttr = "vidx"sv;
   if (config.coplanar) {
     uniBufAttrs += "\n    coplanar_plane: vec4f,";
+  }
+  if (info.latchedNbt) {
+    uniBufAttrs +=
+        "\n    latched_tangent: vec4f,"
+        "\n    latched_binrm: vec4f,";
   }
   if (config.lineMode != 0) {
     vtxInAttrs += ",\n    @builtin(instance_index) iidx: u32";
