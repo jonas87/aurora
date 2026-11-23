@@ -742,10 +742,13 @@ auto attr_load(const ShaderConfig& config, GXAttr attr, std::string_view vidx) -
   }
 }
 
+// The three vectors of an NBT normal in the order the vertex data holds them, which is each slice's
+// position: the normal, then the tangent (the emboss offset's s axis and the GX_TG_TANGENT source),
+// then the binormal (its t axis and the GX_TG_BINRM source).
 enum class NbtSlice : u8 {
   N,
-  B,
   T,
+  B,
 };
 
 auto attr_load_nbt_slice(const ShaderConfig& config, NbtSlice slice, std::string_view vidx) -> std::string {
