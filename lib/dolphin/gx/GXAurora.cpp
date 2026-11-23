@@ -143,6 +143,10 @@ GXBool AuroraReadbackCaptureColor(AuroraReadbackStream stream, u64 key, u32* wid
   return aurora::gfx::readback::capture_color(stream, key, width, height) ? GX_TRUE : GX_FALSE;
 }
 
+GXBool AuroraReadbackCaptureXfb(AuroraReadbackStream stream, u64 key, u32* width, u32* height) {
+  return aurora::gfx::readback::capture_xfb(stream, key, width, height) ? GX_TRUE : GX_FALSE;
+}
+
 GXBool AuroraReadbackGet(AuroraReadbackStream stream, AuroraReadbackDest* dests, u32 count) {
   return aurora::gx::readback::get(stream, dests, count);
 }

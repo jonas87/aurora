@@ -100,8 +100,12 @@ struct RenderPass {
   wgpu::Texture snapshotColorDst;
   wgpu::TextureView snapshotDepthDst;
   wgpu::Texture snapshotNormalDst;
+  // The display copy: xfbRect of the EFB into xfbDstRect of the XFB, scaled when the sizes differ.
   wgpu::Texture xfbDst;
+  wgpu::TextureView xfbDstView;
   ClipRect xfbRect;
+  ClipRect xfbDstRect;
+  Range xfbUniformRange;
   float clearDepthValue = 1.f;
   wgpu::LoadOp depthLoadOp = wgpu::LoadOp::Undefined;
   wgpu::StoreOp depthStoreOp = wgpu::StoreOp::Store;

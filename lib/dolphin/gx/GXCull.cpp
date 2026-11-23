@@ -24,8 +24,9 @@ void GXSetScissor(u32 left, u32 top, u32 width, u32 height) {
 void GXSetScissorBoxOffset(s32 x, s32 y) {
   u32 reg = 0;
 
-  u32 hx = (x + static_cast<u32>(kViewOffset)) >> 1;
-  u32 hy = (y + static_cast<u32>(kViewOffset)) >> 1;
+  // The register holds each offset with the screen bias, halved.
+  u32 hx = static_cast<u32>(x - kViewOffset) >> 1;
+  u32 hy = static_cast<u32>(y - kViewOffset) >> 1;
   SET_REG_FIELD(0, reg, 10, 0, hx);
   SET_REG_FIELD(0, reg, 10, 10, hy);
   SET_REG_FIELD(0, reg, 8, 24, 0x59);

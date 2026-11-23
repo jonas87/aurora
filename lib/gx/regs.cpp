@@ -130,23 +130,35 @@ void bp_tev_ind(u8 reg, u32 value) noexcept {
   s.indTexAddPrev = reg_get(value, 1, 20) != 0;
 }
 
-// Scissor (0x20/0x21)
+// The screen coordinates' bias in the scissor and scissor box offset registers.
+constexpr s32 ScreenBias = 342;
+
+// Scissor (0x20/0x21) and scissor box offset (0x59)
 void bp_scissor(u8, u32) noexcept {
   const u32 scis0 = g_gxState.bpRegCache[0x20];
   const u32 scis1 = g_gxState.bpRegCache[0x21];
 
-  const u32 boxOffset = g_gxState.bpRegCache[0x59];
-  // The box offset fields are signed 9-bit values and also halved, like the viewport registers. Sign extend.
-  const s32 offsX = static_cast<s32>(reg_get(boxOffset, 10, 0)) << 23 >> 22;
-  const s32 offsY = static_cast<s32>(reg_get(boxOffset, 10, 10)) << 23 >> 22;
+  // The box offset holds (offset + 342) / 2 per axis. The rasterizer subtracts it from the screen
+  // coordinates of the scissor box and of everything drawn, so screen row y lands in EFB row
+  // y - offset.
+  Vec2<s32> offset{0, 0};
+  if (g_gxState.bpRegValid.test(0x59)) {
+    const u32 boxOffset = g_gxState.bpRegCache[0x59];
+    offset.x = static_cast<s32>(reg_get(boxOffset, 10, 0)) * 2 - ScreenBias;
+    offset.y = static_cast<s32>(reg_get(boxOffset, 10, 10)) * 2 - ScreenBias;
+  }
 
-  const s32 tp = static_cast<s32>(reg_get(scis0, 11, 0)) + offsY;
-  const s32 lf = static_cast<s32>(reg_get(scis0, 11, 12)) + offsX;
-  const s32 bm = static_cast<s32>(reg_get(scis1, 11, 0)) + offsY;
-  const s32 rt = static_cast<s32>(reg_get(scis1, 11, 12)) + offsX;
+  const s32 tp = static_cast<s32>(reg_get(scis0, 11, 0)) - ScreenBias - offset.y;
+  const s32 lf = static_cast<s32>(reg_get(scis0, 11, 12)) - ScreenBias - offset.x;
+  const s32 bm = static_cast<s32>(reg_get(scis1, 11, 0)) - ScreenBias - offset.y;
+  const s32 rt = static_cast<s32>(reg_get(scis1, 11, 12)) - ScreenBias - offset.x;
   const s32 wd = std::max(rt - lf + 1, 0);
   const s32 ht = std::max(bm - tp + 1, 0);
   set_logical_scissor({lf, tp, wd, ht});
+  if (offset != g_gxState.scissorBoxOffset) {
+    g_gxState.scissorBoxOffset = offset;
+    set_screen_viewport(g_gxState.screenViewport);
+  }
 }
 
 // Line/point size (0x22)
@@ -279,7 +291,7 @@ void bp_clear_depth(u8, u32 value) noexcept { g_gxState.clearDepth = reg_get(val
 void bp_efb_copy(u8, u32 value) noexcept {
   const bool clear = reg_get(value, 1, 11) != 0;
   if (reg_get(value, 1, 14) != 0) {
-    copy_disp(clear);
+    copy_disp(clear, reg_get(value, 1, 10) != 0);
   } else {
     copy_tex(g_gxState.texCopyDest, clear);
   }
@@ -544,6 +556,8 @@ constexpr auto kBpRegs = [] {
   regs[0x41] = {bp_cmode0, DirtyPipeline};
   regs[0x42] = {bp_cmode1, DirtyPipeline};
   regs[0x43] = {bp_pe_ctrl, DirtyPipeline};
+  regs[0x4D] = {}; // Copy destination stride; the display copy reads it from shadow
+  regs[0x4E] = {}; // Display copy Y scale; the display copy reads it from shadow
   regs[0x4F] = {bp_clear_ra};
   regs[0x50] = {bp_clear_bg};
   regs[0x51] = {bp_clear_depth};
@@ -908,7 +922,7 @@ void xf_load_viewport(const u8* data) noexcept {
   f32 oz = read_bits<f32>(data + 20);
   f32 width = sx * 2.0f;
   f32 height = -sy * 2.0f;
-  set_logical_viewport({
+  set_screen_viewport({
       .left = ox - 340.0f - width / 2.0f,
       .top = oy - 340.0f - height / 2.0f,
       .width = width,

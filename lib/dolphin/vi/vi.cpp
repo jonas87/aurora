@@ -4,10 +4,16 @@
 #include "aurora/math.hpp"
 #include "vi_internal.hpp"
 
+#include <atomic>
 #include <optional>
 
 namespace aurora::vi {
 std::optional<GXRenderModeObj> g_renderMode;
+
+// The frame buffer VISetNextFrameBuffer names, and the one the display shows once VIFlush has
+// committed it. The game may set them from its retrace callbacks, off the rendering thread.
+std::atomic<void*> g_nextFrameBuffer{nullptr};
+std::atomic<void*> g_displayedFrameBuffer{nullptr};
 
 Vec2<uint32_t> render_mode_size() noexcept {
   if (!g_renderMode) {
@@ -29,6 +35,10 @@ void configure(const GXRenderModeObj* rm) noexcept {
 }
 
 Vec2<uint32_t> configured_fb_size() noexcept { return render_mode_size(); }
+
+uint32_t configured_xfb_lines() noexcept { return g_renderMode ? g_renderMode->xfbHeight : 0; }
+
+const void* displayed_frame_buffer() noexcept { return g_displayedFrameBuffer.load(std::memory_order_acquire); }
 } // namespace aurora::vi
 
 extern "C" {
@@ -41,7 +51,13 @@ void VIConfigurePan(u16 xOrg, u16 yOrg, u16 width, u16 height) {
   (void)height;
 }
 u32 VIGetTvFormat() { return 0; }
-void VIFlush() {}
+void VIFlush() {
+  aurora::vi::g_displayedFrameBuffer.store(aurora::vi::g_nextFrameBuffer.load(std::memory_order_acquire),
+                                           std::memory_order_release);
+}
+void VISetNextFrameBuffer(void* fb) { aurora::vi::g_nextFrameBuffer.store(fb, std::memory_order_release); }
+void* VIGetNextFrameBuffer() { return aurora::vi::g_nextFrameBuffer.load(std::memory_order_acquire); }
+void* VIGetCurrentFrameBuffer() { return aurora::vi::g_displayedFrameBuffer.load(std::memory_order_acquire); }
 
 void VISetWindowTitle(const char* title) { aurora::window::set_title(title); }
 void VISetWindowFullscreen(bool fullscreen) { aurora::window::set_fullscreen(fullscreen); }

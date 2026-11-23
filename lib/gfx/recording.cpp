@@ -19,6 +19,7 @@
 #include "../rmlui/pipeline.hpp"
 #endif
 #include "../window.hpp"
+#include "../dolphin/vi/vi_internal.hpp"
 
 #include <array>
 #include <cstring>
@@ -577,30 +578,99 @@ struct PresentPool {
 };
 std::array<PresentPool, FrameSlotCount> g_presentPools;
 
-webgpu::TextureWithSampler g_xfb;
+// A frame buffer in main memory as the display copies have written it, at render target
+// resolution: its address, line pitch and lines, and the copy that last started it.
+struct XfbImage {
+  uintptr_t base = 0;
+  uint32_t stride = 0;
+  uint32_t lines = 0;
+  uint64_t startFrame = 0;
+  uint64_t startOrder = 0;
+  webgpu::TextureWithSampler texture;
+};
+constexpr size_t MaxXfbImages = 8;
+std::vector<XfbImage> g_xfbImages;
+uint64_t g_xfbStartCount = 0;
 
-const webgpu::TextureWithSampler& acquire_xfb(uint32_t width, uint32_t height, wgpu::TextureFormat format) {
-  if (!g_xfb.texture || g_xfb.size.width != width || g_xfb.size.height != height || g_xfb.format != format) {
-    const wgpu::Extent3D size{width, height, 1};
-    const wgpu::TextureDescriptor desc{
-        .label = "XFB",
-        .usage = wgpu::TextureUsage::CopyDst | wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopySrc,
-        .dimension = wgpu::TextureDimension::e2D,
-        .size = size,
-        .format = format,
-        .mipLevelCount = 1,
-        .sampleCount = 1,
-    };
-    auto texture = webgpu::g_device.CreateTexture(&desc);
-    auto view = texture.CreateView();
-    g_xfb = webgpu::TextureWithSampler{
-        .texture = std::move(texture),
-        .view = std::move(view),
-        .size = size,
-        .format = format,
-    };
+uintptr_t xfb_end(const XfbImage& image) noexcept { return image.base + uintptr_t{image.stride} * image.lines; }
+
+// The image a display copy writes into. A copy into the lines of a frame buffer that an earlier
+// copy of this frame started (a frame drawn in parts) continues it. Any other copy starts the
+// frame buffer at its own address, sized for the lines the video interface shows, and drops the
+// frame buffers whose first line it overwrites.
+XfbImage& acquire_xfb(const XfbCopy& copy, uint64_t frameId) {
+  for (auto& image : g_xfbImages) {
+    if (image.startFrame == frameId && image.stride == copy.stride && copy.dest >= image.base &&
+        copy.dest < xfb_end(image)) {
+      return image;
+    }
   }
-  return g_xfb;
+
+  const auto written = copy.dest + uintptr_t{copy.stride} * copy.lines;
+  std::erase_if(g_xfbImages, [&](const XfbImage& image) { return image.base > copy.dest && image.base < written; });
+  auto it = std::ranges::find(g_xfbImages, copy.dest, &XfbImage::base);
+  if (it == g_xfbImages.end()) {
+    if (g_xfbImages.size() >= MaxXfbImages) {
+      g_xfbImages.erase(std::ranges::min_element(g_xfbImages, {}, &XfbImage::startOrder));
+    }
+    it = g_xfbImages.emplace(g_xfbImages.end());
+  }
+  it->base = copy.dest;
+  it->stride = copy.stride;
+  it->lines = std::max(copy.fbLines, copy.lines);
+  it->startFrame = frameId;
+  it->startOrder = ++g_xfbStartCount;
+  return *it;
+}
+
+// Gives the image a texture at the render target's scale and format, created anew (cleared) when
+// either has changed.
+void size_xfb(XfbImage& image, const XfbCopy& copy, wgpu::TextureFormat format) {
+  const auto width =
+      std::max(1u, static_cast<uint32_t>(std::lround(static_cast<float>(copy.stride / 2) * copy.scale.x)));
+  const auto height = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<float>(image.lines) * copy.scale.y)));
+  auto& xfb = image.texture;
+  if (xfb.texture && xfb.size.width == width && xfb.size.height == height && xfb.format == format) {
+    return;
+  }
+  const wgpu::Extent3D size{width, height, 1};
+  const wgpu::TextureDescriptor desc{
+      .label = "XFB",
+      .usage = wgpu::TextureUsage::CopyDst | wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopySrc |
+               wgpu::TextureUsage::RenderAttachment,
+      .dimension = wgpu::TextureDimension::e2D,
+      .size = size,
+      .format = format,
+      .mipLevelCount = 1,
+      .sampleCount = 1,
+  };
+  auto texture = webgpu::g_device.CreateTexture(&desc);
+  auto view = texture.CreateView();
+  xfb = webgpu::TextureWithSampler{
+      .texture = std::move(texture),
+      .view = std::move(view),
+      .size = size,
+      .format = format,
+  };
+}
+
+// The frame buffer the video interface shows; when it names none that the copies wrote, the one
+// a copy started last.
+const XfbImage* displayed_xfb() noexcept {
+  const auto shown = reinterpret_cast<uintptr_t>(vi::displayed_frame_buffer());
+  const XfbImage* latest = nullptr;
+  for (const auto& image : g_xfbImages) {
+    if (!image.texture.view) {
+      continue;
+    }
+    if (shown != 0 && image.base == shown) {
+      return &image;
+    }
+    if (latest == nullptr || image.startOrder > latest->startOrder) {
+      latest = &image;
+    }
+  }
+  return latest;
 }
 
 present::Request record_present(present::TargetSnapshot target, webgpu::TextureWithSampler source,
@@ -689,7 +759,8 @@ void begin_recording(FramePacket& packet, size_t frameSlot) {
 }
 
 webgpu::TextureWithSampler xfb_present_source() {
-  return g_xfb.view ? g_xfb : current_frame_packet().efb.present_source();
+  const auto* image = displayed_xfb();
+  return image != nullptr ? image->texture : current_frame_packet().efb.present_source();
 }
 
 void record_xfb_present(imgui::DrawData drawData, wgpu::BindGroup rmlBindGroup, bool rmlOverlay) {
@@ -749,7 +820,7 @@ void shutdown_recording() {
   for (auto& pool : g_presentPools) {
     pool = {};
   }
-  g_xfb = {};
+  g_xfbImages.clear();
   g_recorder.currentRenderPass = UINT32_MAX;
   g_offscreenCache.clear();
   g_recorder.offscreenColor = {};
@@ -1071,18 +1142,66 @@ void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bo
   resume_pass_after_copy(prevPass, rect, clearColor, clearAlpha, clearDepth, clearColorValue, clearDepthValue);
 }
 
-void copy_disp(ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth, Vec4<float> clearColorValue,
-               float clearDepthValue) {
+void copy_disp(ClipRect rect, const XfbCopy& xfb, bool clearColor, bool clearAlpha, bool clearDepth,
+               Vec4<float> clearColorValue, float clearDepthValue) {
   auto& prevPass = current_render_passes()[g_recorder.currentRenderPass];
   const auto& color = prevPass.colorAttachments[SceneColorAttachmentIndex];
   const auto left = std::clamp<int32_t>(rect.x, 0, static_cast<int32_t>(color.size.width));
   const auto top = std::clamp<int32_t>(rect.y, 0, static_cast<int32_t>(color.size.height));
   const auto right = std::clamp<int32_t>(rect.x + rect.width, left, static_cast<int32_t>(color.size.width));
   const auto bottom = std::clamp<int32_t>(rect.y + rect.height, top, static_cast<int32_t>(color.size.height));
-  if (right > left && bottom > top) {
-    prevPass.xfbDst =
-        acquire_xfb(static_cast<uint32_t>(right - left), static_cast<uint32_t>(bottom - top), color.format).texture;
-    prevPass.xfbRect = {.x = left, .y = top, .width = right - left, .height = bottom - top};
+  if (right > left && bottom > top && xfb.stride != 0 && xfb.lines != 0) {
+    auto& image = acquire_xfb(xfb, current_frame_packet().frameId);
+    size_xfb(image, xfb, color.format);
+    const auto imageWidth = static_cast<int32_t>(image.texture.size.width);
+    const auto imageHeight = static_cast<int32_t>(image.texture.size.height);
+
+    // The copy's place in the frame buffer: its destination's line and pixel, at render target
+    // scale. An unscaled copy writes its source lines one to one; a scaled one stretches them over
+    // the lines it writes.
+    const auto offset = xfb.dest - image.base;
+    const auto row = static_cast<float>(offset / xfb.stride);
+    const auto column = static_cast<float>(offset % xfb.stride / 2);
+    const auto srcWidth = right - left;
+    const auto srcHeight = bottom - top;
+    const auto dstLeft = std::min(static_cast<int32_t>(std::lround(column * xfb.scale.x)), imageWidth);
+    const auto dstTop = std::min(static_cast<int32_t>(std::lround(row * xfb.scale.y)), imageHeight);
+    int32_t dstHeight = srcHeight;
+    if (xfb.scaled) {
+      dstHeight = static_cast<int32_t>(std::lround((row + static_cast<float>(xfb.lines)) * xfb.scale.y)) - dstTop;
+    }
+    const auto width = std::min(srcWidth, imageWidth - dstLeft);
+    const auto height = std::min(dstHeight, imageHeight - dstTop);
+    if (width > 0 && height > 0) {
+      // The source lines that land in the frame buffer when its end clips the copy.
+      auto srcRows = srcHeight;
+      if (height != dstHeight) {
+        srcRows =
+            std::max(1, static_cast<int32_t>(std::lround(static_cast<float>(srcHeight) * static_cast<float>(height) /
+                                                         static_cast<float>(dstHeight))));
+      }
+      prevPass.xfbDst = image.texture.texture;
+      prevPass.xfbDstView = image.texture.view;
+      prevPass.xfbRect = {.x = left, .y = top, .width = width, .height = srcRows};
+      prevPass.xfbDstRect = {.x = dstLeft, .y = dstTop, .width = width, .height = height};
+      if (srcRows != height) {
+        if (color.format == webgpu::g_efbFormat) {
+          const auto targetWidth = static_cast<float>(color.size.width);
+          const auto targetHeight = static_cast<float>(color.size.height);
+          const tex_copy_conv::Uniforms uniforms{
+              .offset = {static_cast<float>(left) / targetWidth, static_cast<float>(top) / targetHeight},
+              .scale = {static_cast<float>(width) / targetWidth, static_cast<float>(srcRows) / targetHeight},
+              .srcTexel = {1.f / targetWidth, 1.f / targetHeight},
+          };
+          prevPass.xfbUniformRange = push_uniform(uniforms);
+        } else {
+          // The scaling blit draws in the EFB's format only; other targets copy their lines unscaled.
+          const auto rows = std::min(srcRows, height);
+          prevPass.xfbRect.height = rows;
+          prevPass.xfbDstRect.height = rows;
+        }
+      }
+    }
   }
   enqueue_pass(current_frame_packet(), g_recorder.currentRenderPass);
   resume_pass_after_copy(prevPass, rect, clearColor, clearAlpha, clearDepth, clearColorValue, clearDepthValue);
@@ -1353,6 +1472,51 @@ bool readback::capture_color(StreamHandle stream, uint64_t key, uint32_t* widthO
   pass.discardable = false;
   enqueue_pass(current_frame_packet(), g_recorder.currentRenderPass);
   resume_pass_loading(pass);
+  return push_readback_op(std::move(job), false);
+}
+
+bool readback::capture_xfb(StreamHandle stream, uint64_t key, uint32_t* widthOut, uint32_t* heightOut) {
+  gx::fifo::drain();
+  if (!g_recorder.active() || g_recorder.currentRenderPass == UINT32_MAX || !valid_stream(stream)) {
+    return false;
+  }
+  const auto* image = displayed_xfb();
+  if (image == nullptr) {
+    return capture_color(stream, key, widthOut, heightOut);
+  }
+  const auto& xfb = image->texture;
+  if (xfb.format != wgpu::TextureFormat::RGBA8Unorm && xfb.format != wgpu::TextureFormat::BGRA8Unorm) {
+    return false;
+  }
+
+  const auto bytes = uint64_t{xfb.size.width} * xfb.size.height * 4;
+  if (bytes > UINT32_MAX) {
+    return false;
+  }
+  auto job = create_job(stream, next_sequence(stream), JobKind::Color,
+                        {{
+                            .key = key,
+                            .payloadSize = static_cast<uint32_t>(bytes),
+                        }},
+                        static_cast<uint32_t>(bytes));
+  if (!job) {
+    return false;
+  }
+
+  // The display copies are recorded with the passes before this one, so the readback follows them.
+  job->colorTexture = xfb.texture;
+  job->colorWidth = xfb.size.width;
+  job->colorHeight = xfb.size.height;
+  job->colorRowPitch = AURORA_ALIGN(xfb.size.width * 4, 256);
+  job->colorFormat = xfb.format;
+  job->packet->imageWidth = xfb.size.width;
+  job->packet->imageHeight = xfb.size.height;
+  if (widthOut) {
+    *widthOut = xfb.size.width;
+  }
+  if (heightOut) {
+    *heightOut = xfb.size.height;
+  }
   return push_readback_op(std::move(job), false);
 }
 

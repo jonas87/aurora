@@ -334,23 +334,41 @@ void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo,
   }
   if (passInfo.xfbDst) {
     const webgpu::gpu_prof::Zone zone{cmd, "XFB copy"};
-    const wgpu::TexelCopyTextureInfo src{
-        .texture = passInfo.copySourceTexture,
-        .origin =
-            wgpu::Origin3D{
-                .x = static_cast<uint32_t>(passInfo.xfbRect.x),
-                .y = static_cast<uint32_t>(passInfo.xfbRect.y),
-            },
-    };
-    const wgpu::TexelCopyTextureInfo dst{
-        .texture = passInfo.xfbDst,
-    };
-    const wgpu::Extent3D size{
-        .width = static_cast<uint32_t>(passInfo.xfbRect.width),
-        .height = static_cast<uint32_t>(passInfo.xfbRect.height),
-        .depthOrArrayLayers = 1,
-    };
-    cmd.CopyTextureToTexture(&src, &dst, &size);
+    const auto& srcRect = passInfo.xfbRect;
+    const auto& dstRect = passInfo.xfbDstRect;
+    if (srcRect.width == dstRect.width && srcRect.height == dstRect.height) {
+      const wgpu::TexelCopyTextureInfo src{
+          .texture = passInfo.copySourceTexture,
+          .origin =
+              wgpu::Origin3D{
+                  .x = static_cast<uint32_t>(srcRect.x),
+                  .y = static_cast<uint32_t>(srcRect.y),
+              },
+      };
+      const wgpu::TexelCopyTextureInfo dst{
+          .texture = passInfo.xfbDst,
+          .origin =
+              wgpu::Origin3D{
+                  .x = static_cast<uint32_t>(dstRect.x),
+                  .y = static_cast<uint32_t>(dstRect.y),
+              },
+      };
+      const wgpu::Extent3D size{
+          .width = static_cast<uint32_t>(srcRect.width),
+          .height = static_cast<uint32_t>(srcRect.height),
+          .depthOrArrayLayers = 1,
+      };
+      cmd.CopyTextureToTexture(&src, &dst, &size);
+    } else {
+      const tex_copy_conv::ConvRequest convReq{
+          .fmt = GX_TF_RGBA8,
+          .srcFmt = passInfo.resolveSourceFormat,
+          .srcView = passInfo.copySourceView,
+          .uniformRange = passInfo.xfbUniformRange,
+          .sampleFilter = tex_copy_conv::SampleFilter::Linear,
+      };
+      tex_copy_conv::blit_rect(cmd, convReq, passInfo.xfbDstView, dstRect);
+    }
   }
 }
 

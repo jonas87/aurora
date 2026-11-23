@@ -120,8 +120,22 @@ PipelineRef pipeline_ref(const PipelineConfig& config);
 void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
                        Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat,
                        GXPixelFmt sourceFormat, uint32_t boxFilterTaps = 0);
-void copy_disp(ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth, Vec4<float> clearColorValue,
-               float clearDepthValue);
+// A display copy's place in the emulated XFB: the frame buffer in main memory it writes into.
+struct XfbCopy {
+  // The copy's destination address and the frame buffer's line pitch in bytes.
+  uintptr_t dest = 0;
+  uint32_t stride = 0;
+  // The lines the copy writes (after its Y scale), and the lines of the frame buffer the video
+  // interface shows, which size a frame buffer the copy starts.
+  uint32_t lines = 0;
+  uint32_t fbLines = 0;
+  // Whether the Y scale stretches the source lines over a different number of lines.
+  bool scaled = false;
+  // Render target pixels per frame buffer pixel.
+  Vec2<float> scale{1.f, 1.f};
+};
+void copy_disp(ClipRect rect, const XfbCopy& xfb, bool clearColor, bool clearAlpha, bool clearDepth,
+               Vec4<float> clearColorValue, float clearDepthValue);
 void clear_rect(ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth, Vec4<float> clearColorValue,
                 float clearDepthValue);
 uint32_t align_uniform(uint32_t value);

@@ -62,6 +62,7 @@ void set_viewport_policy(AuroraViewportPolicy policy) noexcept {}
 
 namespace aurora::vi {
 Vec2<uint32_t> configured_fb_size() noexcept { return {640, 480}; }
+uint32_t configured_xfb_lines() noexcept { return 480; }
 void configure(const GXRenderModeObj*) noexcept {}
 } // namespace aurora::vi
 
@@ -107,6 +108,13 @@ gfx::ClipRect map_logical_scissor(const gfx::ClipRect& logicalScissor) noexcept 
 void set_logical_viewport(const gfx::Viewport& viewport) noexcept {
   g_gxState.logicalViewport = viewport;
   set_render_viewport(map_logical_viewport(viewport));
+}
+void set_screen_viewport(const gfx::Viewport& viewport) noexcept {
+  g_gxState.screenViewport = viewport;
+  auto efbViewport = viewport;
+  efbViewport.left -= static_cast<float>(g_gxState.scissorBoxOffset.x);
+  efbViewport.top -= static_cast<float>(g_gxState.scissorBoxOffset.y);
+  set_logical_viewport(efbViewport);
 }
 void set_render_viewport(const gfx::Viewport& viewport) noexcept { g_gxState.renderViewport = viewport; }
 void set_logical_scissor(const gfx::ClipRect& scissor) noexcept {
@@ -232,11 +240,11 @@ std::atomic<uint32_t> offscreenHeight{0};
 
 void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
                        Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat,
-                       GXPixelFmt sourceFormat) {
+                       GXPixelFmt sourceFormat, uint32_t boxFilterTaps) {
   testing::resolvePassCount.fetch_add(1, std::memory_order_release);
 }
-void copy_disp(ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth, Vec4<float> clearColorValue,
-               float clearDepthValue) {}
+void copy_disp(ClipRect rect, const XfbCopy& xfb, bool clearColor, bool clearAlpha, bool clearDepth,
+               Vec4<float> clearColorValue, float clearDepthValue) {}
 void clear_rect(ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth, Vec4<float> clearColorValue,
                 float clearDepthValue) {}
 void begin_offscreen(uint32_t width, uint32_t height) {
@@ -273,6 +281,7 @@ bool push_readback_op(std::shared_ptr<readback::Job> job, bool efbSource) {
 
 namespace aurora::gfx::readback {
 bool capture_color(StreamHandle, uint64_t, uint32_t*, uint32_t*) { return false; }
+bool capture_xfb(StreamHandle, uint64_t, uint32_t*, uint32_t*) { return false; }
 } // namespace aurora::gfx::readback
 
 namespace aurora::gfx::readback::gpu {

@@ -39,6 +39,9 @@ void initialize();
 void shutdown();
 void run(const wgpu::CommandEncoder& cmd, const ConvRequest& req);
 void blit(const wgpu::CommandEncoder& cmd, const ConvRequest& req);
+// Blits into dstRect of dst over its contents; dst has the EFB format. The request's dst is unused.
+void blit_rect(const wgpu::CommandEncoder& cmd, const ConvRequest& req, const wgpu::TextureView& dst,
+               const ClipRect& dstRect);
 
 bool snapshot_depth_supported() noexcept;
 void snapshot_depth(const wgpu::CommandEncoder& cmd, const wgpu::TextureView& srcDepth, uint32_t msaaSamples,
