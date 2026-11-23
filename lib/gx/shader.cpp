@@ -10,6 +10,7 @@
 #include <dolphin/gx/GXEnum.h>
 
 #include <absl/container/flat_hash_set.h>
+#include <atomic>
 #include <mutex>
 #include <string_view>
 #include <utility>
@@ -754,7 +755,15 @@ enum class NbtSlice : u8 {
 auto attr_load_nbt_slice(const ShaderConfig& config, NbtSlice slice, std::string_view vidx) -> std::string {
   const auto& mapping = config.attrs[GX_VA_NRM];
   if (mapping.attrType == GX_NONE || mapping.cnt != 9) {
-    Log.fatal("attr_load_nbt_slice: GX_TG_BINRM/TANGENT requires GX_NRM_NBT or GX_NRM_NBT3");
+    // The vertex carries no binormal and tangent: the slice reads as zero. What the hardware's
+    // transform unit reads in this case is not established.
+    static std::atomic_bool warned = false;
+    if (!warned.exchange(true)) {
+      Log.warn("attr_load_nbt_slice: GX_TG_BINRM/TANGENT without GX_NRM_NBT or GX_NRM_NBT3 (normal "
+               "attribute type {}, count {}); the binormal and tangent read as zero",
+               static_cast<int>(mapping.attrType), static_cast<int>(mapping.cnt));
+    }
+    return "vec3<f32>(0.0)";
   }
   const auto sliceIdx = static_cast<u32>(slice);
   const auto compsize = comp_type_size(GX_VA_NRM, static_cast<GXCompType>(mapping.compType));
