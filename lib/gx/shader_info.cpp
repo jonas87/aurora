@@ -239,6 +239,7 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
 
   if (config.coplanar) {
     info.uniformSize += sizeof(Vec4<float>); // coplanar_plane
+    info.uniformSize += sizeof(Vec4<float>); // coplanar_depth
     info.coplanar = true;
   }
   if (config.lineMode != 0) {
@@ -496,6 +497,31 @@ void validate_shader_config(const ShaderConfig& config, const ShaderInfo& info, 
   }
 }
 
+// ZFreeze: the latched co-planar plane (depth over normalised device x and y) taken to the depth
+// the fragment stage writes, over the render target's pixel coordinates: the viewport's mapping of
+// x and y to pixels (y down) and of depth to its range, as the rasteriser applies them. The
+// hardware gives each pixel of a co-planar primitive the plane's depth at that pixel, so every
+// co-planar primitive covering a pixel has the same depth there; evaluating this plane at the
+// fragment's position gives them the same bits, where the rasterised depth of each primitive
+// rounds on its own vertices.
+static Vec4<float> coplanar_window_plane() noexcept {
+  const auto& vp = g_gxState.renderViewport;
+  const double width = std::max(static_cast<double>(vp.width), 1.0);
+  const double height = std::max(static_cast<double>(vp.height), 1.0);
+  const double minDepth = UseReversedZ ? 1.0 - vp.zfar : vp.znear;
+  const double maxDepth = UseReversedZ ? 1.0 - vp.znear : vp.zfar;
+  const double range = maxDepth - minDepth;
+  const double a = g_gxState.coplanarPlane[0];
+  const double b = g_gxState.coplanarPlane[1];
+  const double c = g_gxState.coplanarPlane[2];
+  // x_ndc = 2 * (x - left) / width - 1 and y_ndc = 1 - 2 * (y - top) / height.
+  const double dx = range * a * 2.0 / width;
+  const double dy = -range * b * 2.0 / height;
+  const double base =
+      minDepth + range * (c - a * (1.0 + 2.0 * vp.left / width) + b * (1.0 + 2.0 * vp.top / height));
+  return Vec4{static_cast<float>(dx), static_cast<float>(dy), static_cast<float>(base), 0.f};
+}
+
 static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
   buf.reserve_extra(info.uniformSize);
 
@@ -505,6 +531,7 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
   buf.append<f32>(g_gxState.logicalViewport.height);
   if (info.coplanar) {
     buf.append(g_gxState.coplanarPlane);
+    buf.append(coplanar_window_plane());
   }
   if (info.latchedNbt) {
     buf.append(g_gxState.latchedTangent);

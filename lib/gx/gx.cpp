@@ -314,8 +314,9 @@ void set_screen_viewport(const gfx::Viewport& viewport) noexcept {
 }
 
 void set_render_viewport(const gfx::Viewport& viewport) noexcept {
-  if (viewport.left != g_gxState.renderViewport.left || viewport.width != g_gxState.renderViewport.width ||
-      viewport.height != g_gxState.renderViewport.height) {
+  // The whole viewport: the co-planar depth plane (coplanar_window_plane) also reads its top and
+  // depth range.
+  if (viewport != g_gxState.renderViewport) {
     g_gxState.dirty |= DirtyUniform;
   }
   g_gxState.renderViewport = viewport;
