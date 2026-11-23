@@ -2070,7 +2070,7 @@ var<storage, read> abuf: array<u32>;
 var<uniform> ubuf: Uniform;{1}
 
 struct VertexOutput {{
-    @builtin(position) pos: vec4f,{2}
+    @builtin(position) @invariant pos: vec4f,{2}
 }};
 
 @vertex
