@@ -754,7 +754,9 @@ enum class NbtSlice : u8 {
 auto attr_load_nbt_slice(const ShaderConfig& config, NbtSlice slice, std::string_view vidx) -> std::string {
   const auto& mapping = config.attrs[GX_VA_NRM];
   if (mapping.attrType == GX_NONE || mapping.cnt != 9) {
-    Log.fatal("attr_load_nbt_slice: GX_TG_BINRM/TANGENT requires GX_NRM_NBT or GX_NRM_NBT3");
+    // The vertex carries no binormal and tangent: the transform unit reads the ones it kept from
+    // the last vertex that had them (latch_nbt in the command processor).
+    return slice == NbtSlice::B ? "ubuf.latched_binrm.xyz" : "ubuf.latched_tangent.xyz";
   }
   const auto sliceIdx = static_cast<u32>(slice);
   const auto compsize = comp_type_size(GX_VA_NRM, static_cast<GXCompType>(mapping.compType));
@@ -941,6 +943,11 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
     uniBufAttrs +=
         "\n    coplanar_plane: vec4f,"
         "\n    coplanar_depth: vec4f,";
+  }
+  if (info.latchedNbt) {
+    uniBufAttrs +=
+        "\n    latched_tangent: vec4f,"
+        "\n    latched_binrm: vec4f,";
   }
   if (config.lineMode != 0) {
     vtxInAttrs += ",\n    @builtin(instance_index) iidx: u32";

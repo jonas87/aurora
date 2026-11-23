@@ -511,8 +511,10 @@ static constexpr u16 trunc_vtx_count(GXPrimitive prim, u16 vtxCount) noexcept {
   }
 }
 
-// One component of a position, big-endian as the FIFO carries it.
-static float read_position_component(const u8* data, GXCompType type, u8 frac) noexcept {
+// One component of a vertex attribute, big-endian as the FIFO carries it, or little-endian from an
+// array the game marks as native (le).
+static float read_vertex_component(const u8* data, GXCompType type, u8 frac, bool le = false) noexcept {
+  const auto byte = [&](u32 index, u32 size) { return static_cast<u32>(data[le ? size - 1 - index : index]); };
   float value = 0.f;
   switch (type) {
   case GX_U8:
@@ -522,14 +524,13 @@ static float read_position_component(const u8* data, GXCompType type, u8 frac) n
     value = static_cast<float>(static_cast<s8>(data[0]));
     break;
   case GX_U16:
-    value = static_cast<float>(static_cast<u16>((data[0] << 8) | data[1]));
+    value = static_cast<float>(static_cast<u16>((byte(0, 2) << 8) | byte(1, 2)));
     break;
   case GX_S16:
-    value = static_cast<float>(static_cast<s16>((data[0] << 8) | data[1]));
+    value = static_cast<float>(static_cast<s16>((byte(0, 2) << 8) | byte(1, 2)));
     break;
   case GX_F32: {
-    const u32 bits = (static_cast<u32>(data[0]) << 24) | (static_cast<u32>(data[1]) << 16) |
-                     (static_cast<u32>(data[2]) << 8) | data[3];
+    const u32 bits = (byte(0, 4) << 24) | (byte(1, 4) << 16) | (byte(2, 4) << 8) | byte(3, 4);
     return std::bit_cast<float>(bits);
   }
   default:
@@ -592,7 +593,7 @@ static void latch_coplanar_plane(GXVtxFmt fmt, std::span<const u8> vertexData, u
     const u8* data = vertexData.data() + v * vtxSize + offset;
     float pos[3] = {0.f, 0.f, 0.f};
     for (u32 k = 0; k < count; ++k) {
-      pos[k] = read_position_component(data + k * size, attrFmt.type, attrFmt.frac);
+      pos[k] = read_vertex_component(data + k * size, attrFmt.type, attrFmt.frac);
     }
     const Vec4<float>* rows[3] = {&matrix.m0, &matrix.m1, &matrix.m2};
     float view[4];
@@ -635,6 +636,81 @@ static void latch_coplanar_plane(GXVtxFmt fmt, std::span<const u8> vertexData, u
   g_gxState.dirty |= DirtyPipeline | DirtyUniform;
 }
 
+// The transform unit keeps the tangent and binormal of the last vertex sent with NBT normals, and
+// a vertex without them reads the kept ones: games send a culled triangle with GX_NRM_NBT normals
+// to set them for the draws that follow. Latches the last vertex's tangent and binormal, direct or
+// indexed, addressed and read as the vertex shader reads them (attr_load_nbt_slice), culled or
+// not.
+static void latch_nbt(GXVtxFmt fmt, std::span<const u8> vertexData, u32 vtxSize, u16 vtxCount) noexcept {
+  const auto& state = g_gxState;
+  const auto& attrFmt = state.vtxFmts[fmt].attrs[GX_VA_NRM];
+  const auto type = state.vtxDesc[GX_VA_NRM];
+  if (vtxCount == 0 || type == GX_NONE || (attrFmt.cnt != GX_NRM_NBT && attrFmt.cnt != GX_NRM_NBT3)) {
+    return;
+  }
+  const bool nbt3 = attrFmt.cnt == GX_NRM_NBT3;
+
+  // The normal's offset in the vertex: the attributes before it, as calc_vtx_size counts them.
+  u32 offset = 0;
+  for (int i = GX_VA_PNMTXIDX; i < GX_VA_NRM; ++i) {
+    const auto attr = static_cast<GXAttr>(i);
+    const auto& fmtAttr = state.vtxFmts[fmt].attrs[i];
+    switch (state.vtxDesc[i]) {
+    case GX_DIRECT:
+      offset += comp_type_size(attr, fmtAttr.type) * comp_cnt_count(attr, fmtAttr.cnt);
+      break;
+    case GX_INDEX8:
+      offset += 1;
+      break;
+    case GX_INDEX16:
+      offset += 2;
+      break;
+    default:
+      break;
+    }
+  }
+
+  const u32 compSize = comp_type_size(GX_VA_NRM, attrFmt.type);
+  const u32 indexSize = type == GX_INDEX8 ? 1 : 2;
+  const u32 attrSize = type == GX_DIRECT ? 9 * compSize : (nbt3 ? 3 * indexSize : indexSize);
+  if (offset + attrSize > vtxSize) {
+    return;
+  }
+  const u8* vertex = vertexData.data() + static_cast<size_t>(vtxCount - 1) * vtxSize + offset;
+  const auto& array = state.arrays[GX_VA_NRM];
+
+  // Slice 1 is the tangent, slice 2 the binormal, in the order the vertex data holds them.
+  Vec4<float> slices[2]{};
+  for (u32 slice = 1; slice <= 2; ++slice) {
+    const u8* data = nullptr;
+    bool le = false;
+    if (type == GX_DIRECT) {
+      data = vertex + slice * 3 * compSize;
+    } else {
+      const u8* indexData = vertex + (nbt3 ? slice * indexSize : 0);
+      const u32 index = type == GX_INDEX8 ? indexData[0] : (static_cast<u32>(indexData[0]) << 8) | indexData[1];
+      const size_t start = static_cast<size_t>(index) * array.stride + slice * 3 * compSize;
+      if (array.data == nullptr || start + 3 * compSize > array.size) {
+        return;
+      }
+      data = static_cast<const u8*>(array.data) + start;
+      le = array.le;
+    }
+    for (u32 k = 0; k < 3; ++k) {
+      slices[slice - 1][k] = read_vertex_component(data + k * compSize, attrFmt.type, attrFmt.frac, le);
+    }
+  }
+  if (slices[0] != state.latchedTangent || slices[1] != state.latchedBinormal) {
+    g_gxState.latchedTangent = slices[0];
+    g_gxState.latchedBinormal = slices[1];
+    // Only a pipeline that reads the latched vectors needs its uniform again: a draw with another
+    // pipeline builds its own, and every draw with NBT normals changes them.
+    if (sDrawCache.hasPipeline && sDrawCache.shaderInfo.latchedNbt) {
+      g_gxState.dirty |= DirtyUniform;
+    }
+  }
+}
+
 static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, ByteReader& reader) noexcept {
   ZoneScoped;
   u32 vtxSize;
@@ -647,6 +723,7 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, ByteReader& 
   if (totalVtxBytes > reader.remaining())
     UNLIKELY { handle_draw_overrun(totalVtxBytes, reader); }
   const auto vertexData = reader.take(totalVtxBytes);
+  latch_nbt(fmt, vertexData, vtxSize, vtxCount);
 
   vtxCount = trunc_vtx_count(prim, vtxCount);
   if (vtxCount == 0)

@@ -346,6 +346,10 @@ struct GXState {
   bool coplanar = false;
   bool coplanarPlaneValid = false;
   Vec4<float> coplanarPlane{};
+  // The tangent and binormal of the last vertex sent with GX_NRM_NBT or GX_NRM_NBT3 normals. The
+  // transform unit keeps them, and a vertex without them reads the kept ones.
+  Vec4<float> latchedTangent{};
+  Vec4<float> latchedBinormal{};
   u8 lineWidth = 0;
   u8 pointSize = 0;
   GXTexOffset lineTexOffset = GX_TO_ZERO;
@@ -570,6 +574,9 @@ struct ShaderInfo {
   bool lightingEnabled : 1 = false;
   u8 lineMode : 2 = 0;
   bool coplanar : 1 = false;
+  // A texgen reads the binormal and tangent, and the vertex does not carry them: they come from
+  // the latched ones.
+  bool latchedNbt : 1 = false;
 };
 struct BindGroupRanges {
   std::array<gfx::Range, MaxIndexAttr> vaRanges{};

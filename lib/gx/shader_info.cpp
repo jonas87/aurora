@@ -327,6 +327,24 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
     }
   }
 
+  // A vertex without NBT normals reads the binormal and tangent the transform unit kept from the
+  // last vertex that had them.
+  const auto& normal = config.attrs[GX_VA_NRM];
+  if (normal.attrType == GX_NONE || normal.cnt != 9) {
+    for (int i = 0; i < info.sampledTexCoords.size(); ++i) {
+      if (!info.sampledTexCoords.test(i)) {
+        continue;
+      }
+      const auto& tcg = config.tcgs[i];
+      if ((tcg.type >= GX_TG_BUMP0 && tcg.type <= GX_TG_BUMP7) || tcg.src == GX_TG_BINRM || tcg.src == GX_TG_TANGENT) {
+        info.latchedNbt = true;
+      }
+    }
+  }
+  if (info.latchedNbt) {
+    info.uniformSize += 2 * sizeof(Vec4<float>); // latched_tangent, latched_binrm
+  }
+
   // Texgens can consume a color channel even when TEV never reads it directly.
   // Include these channels before calculating lighting and uniform requirements.
   for (int i = 0; i < info.sampledTexCoords.size(); ++i) {
@@ -449,7 +467,11 @@ void validate_shader_config(const ShaderConfig& config, const ShaderInfo& info, 
                      "TEV or indirect stage is still set from an earlier draw.\n{}",
                      i, describe_texturing(config, numTexGens));
     }
-    if (tcg.src >= GX_TG_TEX0 && tcg.src <= GX_TG_TEX7) {
+    // An emboss texgen offsets an earlier texture coordinate (its emboss source) and reads no
+    // vertex attribute; its source row, which GXSetTexCoordGen2 leaves at the first texture
+    // coordinate's, is unused.
+    const bool emboss = tcg.type >= GX_TG_BUMP0 && tcg.type <= GX_TG_BUMP7;
+    if (!emboss && tcg.src >= GX_TG_TEX0 && tcg.src <= GX_TG_TEX7) {
       const auto attr = static_cast<GXAttr>(GX_VA_TEX0 + (tcg.src - GX_TG_TEX0));
       if (config.attrs[attr].attrType == GX_NONE) {
         UNLIKELY FATAL("GX: texgen {} reads vertex attribute TEX{}, but the vertex descriptor does not have it "
@@ -508,6 +530,10 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
   if (info.coplanar) {
     buf.append(g_gxState.coplanarPlane);
     buf.append(coplanar_window_plane());
+  }
+  if (info.latchedNbt) {
+    buf.append(g_gxState.latchedTangent);
+    buf.append(g_gxState.latchedBinormal);
   }
   if (info.lineMode != 0) {
     if (info.lineMode == 3) { // GX_POINTS
