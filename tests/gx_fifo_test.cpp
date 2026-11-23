@@ -3167,9 +3167,11 @@ TEST_F(GXFifoTest, LoadTexMtxImm_StartsAtAnyRow) {
 
 // --- GXSetChanAmbColor / GXSetChanMatColor (XF 0x100A-0x100D) ---
 
+// A colour channel (GX_COLOR0, GX_COLOR1) replaces red, green and blue and keeps the stored alpha; an alpha
+// channel (GX_ALPHA0, GX_ALPHA1) replaces only the alpha.
 TEST_F(GXFifoTest, ChanAmbColor_Color0) {
-  GXColor amb = {64, 128, 192, 255};
-  GXSetChanAmbColor(GX_COLOR0, amb);
+  GXSetChanAmbColor(GX_COLOR0A0, GXColor{1, 2, 3, 200});
+  GXSetChanAmbColor(GX_COLOR0, GXColor{64, 128, 192, 255});
   auto bytes = capture_fifo();
 
   reset_gx_state();
@@ -3179,12 +3181,12 @@ TEST_F(GXFifoTest, ChanAmbColor_Color0) {
   EXPECT_NEAR(state.ambColor[0], 64.f / 255.f, 1.f / 255.f);
   EXPECT_NEAR(state.ambColor[1], 128.f / 255.f, 1.f / 255.f);
   EXPECT_NEAR(state.ambColor[2], 192.f / 255.f, 1.f / 255.f);
-  EXPECT_NEAR(state.ambColor[3], 255.f / 255.f, 1.f / 255.f);
+  EXPECT_NEAR(state.ambColor[3], 200.f / 255.f, 1.f / 255.f);
 }
 
 TEST_F(GXFifoTest, ChanMatColor_Color0) {
-  GXColor mat = {255, 0, 128, 64};
-  GXSetChanMatColor(GX_COLOR0, mat);
+  GXSetChanMatColor(GX_COLOR0A0, GXColor{1, 2, 3, 30});
+  GXSetChanMatColor(GX_COLOR0, GXColor{255, 0, 128, 64});
   auto bytes = capture_fifo();
 
   reset_gx_state();
@@ -3194,12 +3196,12 @@ TEST_F(GXFifoTest, ChanMatColor_Color0) {
   EXPECT_NEAR(state.matColor[0], 255.f / 255.f, 1.f / 255.f);
   EXPECT_NEAR(state.matColor[1], 0.f / 255.f, 1.f / 255.f);
   EXPECT_NEAR(state.matColor[2], 128.f / 255.f, 1.f / 255.f);
-  EXPECT_NEAR(state.matColor[3], 64.f / 255.f, 1.f / 255.f);
+  EXPECT_NEAR(state.matColor[3], 30.f / 255.f, 1.f / 255.f);
 }
 
 TEST_F(GXFifoTest, ChanAmbColor_Color1) {
-  GXColor amb = {10, 20, 30, 40};
-  GXSetChanAmbColor(GX_COLOR1, amb);
+  GXSetChanAmbColor(GX_COLOR1A1, GXColor{5, 6, 7, 90});
+  GXSetChanAmbColor(GX_COLOR1, GXColor{10, 20, 30, 40});
   auto bytes = capture_fifo();
 
   reset_gx_state();
@@ -3209,12 +3211,12 @@ TEST_F(GXFifoTest, ChanAmbColor_Color1) {
   EXPECT_NEAR(state.ambColor[0], 10.f / 255.f, 1.f / 255.f);
   EXPECT_NEAR(state.ambColor[1], 20.f / 255.f, 1.f / 255.f);
   EXPECT_NEAR(state.ambColor[2], 30.f / 255.f, 1.f / 255.f);
-  EXPECT_NEAR(state.ambColor[3], 40.f / 255.f, 1.f / 255.f);
+  EXPECT_NEAR(state.ambColor[3], 90.f / 255.f, 1.f / 255.f);
 }
 
 TEST_F(GXFifoTest, ChanMatColor_Color1) {
-  GXColor mat = {100, 150, 200, 250};
-  GXSetChanMatColor(GX_COLOR1, mat);
+  GXSetChanMatColor(GX_COLOR1A1, GXColor{5, 6, 7, 70});
+  GXSetChanMatColor(GX_COLOR1, GXColor{100, 150, 200, 250});
   auto bytes = capture_fifo();
 
   reset_gx_state();
@@ -3224,7 +3226,37 @@ TEST_F(GXFifoTest, ChanMatColor_Color1) {
   EXPECT_NEAR(state.matColor[0], 100.f / 255.f, 1.f / 255.f);
   EXPECT_NEAR(state.matColor[1], 150.f / 255.f, 1.f / 255.f);
   EXPECT_NEAR(state.matColor[2], 200.f / 255.f, 1.f / 255.f);
-  EXPECT_NEAR(state.matColor[3], 250.f / 255.f, 1.f / 255.f);
+  EXPECT_NEAR(state.matColor[3], 70.f / 255.f, 1.f / 255.f);
+}
+
+TEST_F(GXFifoTest, ChanAmbColor_Alpha0) {
+  GXSetChanAmbColor(GX_COLOR0A0, GXColor{11, 22, 33, 44});
+  GXSetChanAmbColor(GX_ALPHA0, GXColor{99, 99, 99, 123});
+  auto bytes = capture_fifo();
+
+  reset_gx_state();
+  decode_fifo(bytes);
+
+  auto& state = g_gxState.colorChannelState[GX_COLOR0];
+  EXPECT_NEAR(state.ambColor[0], 11.f / 255.f, 1.f / 255.f);
+  EXPECT_NEAR(state.ambColor[1], 22.f / 255.f, 1.f / 255.f);
+  EXPECT_NEAR(state.ambColor[2], 33.f / 255.f, 1.f / 255.f);
+  EXPECT_NEAR(state.ambColor[3], 123.f / 255.f, 1.f / 255.f);
+}
+
+TEST_F(GXFifoTest, ChanMatColor_Alpha1) {
+  GXSetChanMatColor(GX_COLOR1A1, GXColor{12, 24, 36, 48});
+  GXSetChanMatColor(GX_ALPHA1, GXColor{99, 99, 99, 7});
+  auto bytes = capture_fifo();
+
+  reset_gx_state();
+  decode_fifo(bytes);
+
+  auto& state = g_gxState.colorChannelState[GX_COLOR1];
+  EXPECT_NEAR(state.matColor[0], 12.f / 255.f, 1.f / 255.f);
+  EXPECT_NEAR(state.matColor[1], 24.f / 255.f, 1.f / 255.f);
+  EXPECT_NEAR(state.matColor[2], 36.f / 255.f, 1.f / 255.f);
+  EXPECT_NEAR(state.matColor[3], 7.f / 255.f, 1.f / 255.f);
 }
 
 TEST_F(GXFifoTest, ChanAmbColor_Color0A0_Compound) {
