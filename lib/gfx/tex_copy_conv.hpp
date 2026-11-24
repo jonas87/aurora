@@ -46,5 +46,10 @@ void blit_rect(const wgpu::CommandEncoder& cmd, const ConvRequest& req, const wg
 bool snapshot_depth_supported() noexcept;
 void snapshot_depth(const wgpu::CommandEncoder& cmd, const wgpu::TextureView& srcDepth, uint32_t msaaSamples,
                     const wgpu::TextureView& dst);
+// Resolves a multisampled depth buffer to a single-sampled one (each pixel's first sample) that a depth copy can read.
+// With a region (in the buffer's pixels), only the region and a texel around it are resolved, the rest of the view
+// left undefined: the copy reads only its source rectangle. The view stays valid for the copy that follows.
+wgpu::TextureView resolve_depth(const wgpu::CommandEncoder& cmd, const wgpu::TextureView& srcDepth, uint32_t width,
+                                uint32_t height, const ClipRect* region = nullptr);
 
 } // namespace aurora::gfx::tex_copy_conv
