@@ -16,6 +16,7 @@ AuroraWindowSize g_displaySize{};
 std::optional<State> g_applied;
 float g_scale = 0.f;
 bool g_aspectFit = false;
+double g_aspectLock = 0.0;
 
 uint32_t extent(double value) {
   return static_cast<uint32_t>(std::clamp(std::round(value), 1.0, static_cast<double>(UINT32_MAX)));
@@ -30,6 +31,26 @@ AuroraWindowSize display_size(uint32_t width, uint32_t height, float scale) {
       .native_fb_height = height,
       .scale = scale,
   };
+}
+
+// The framebuffer's size for the configured scale and policy. With the aspect ratio locked, it is the size for the
+// largest part of the surface with that ratio; presenting centers it on the whole surface.
+AuroraWindowSize configured_size(AuroraWindowSize size, uint32_t baseWidth, uint32_t baseHeight) noexcept {
+  if (g_aspectLock <= 0.0 || !size.native_fb_width || !size.native_fb_height) {
+    return calculate_size(size, baseWidth, baseHeight, g_scale, g_aspectFit);
+  }
+
+  auto locked = size;
+  if (size.native_fb_width > size.native_fb_height * g_aspectLock) {
+    locked.native_fb_width = extent(size.native_fb_height * g_aspectLock);
+  } else {
+    locked.native_fb_height = extent(size.native_fb_width / g_aspectLock);
+  }
+  locked = calculate_size(locked, baseWidth, baseHeight, g_scale, g_aspectFit);
+  auto result = calculate_size(size, baseWidth, baseHeight, g_scale, g_aspectFit);
+  result.fb_width = locked.fb_width;
+  result.fb_height = locked.fb_height;
+  return result;
 }
 
 } // namespace
@@ -84,6 +105,7 @@ void initialize(const AuroraSurfaceDesc& desc) {
   g_applied.reset();
   g_scale = 0.f;
   g_aspectFit = false;
+  g_aspectLock = 0.0;
 }
 
 void shutdown() {
@@ -117,10 +139,21 @@ bool set_aspect_fit(bool fit) {
   return true;
 }
 
+bool set_aspect_lock(double aspect) {
+  std::lock_guard lock{g_configMutex};
+  aspect = std::isfinite(aspect) ? std::max(0.0, aspect) : 0.0;
+  if (g_aspectLock == aspect) {
+    return false;
+  }
+
+  g_aspectLock = aspect;
+  return true;
+}
+
 AuroraWindowSize resolve_size(AuroraWindowSize size) {
   const auto [baseWidth, baseHeight] = vi::configured_fb_size();
   std::lock_guard lock{g_configMutex};
-  return calculate_size(size, baseWidth, baseHeight, g_scale, g_aspectFit);
+  return configured_size(size, baseWidth, baseHeight);
 }
 
 AuroraWindowSize pending_size() {
@@ -137,7 +170,7 @@ AuroraWindowSize pending_size() {
     }
   }
 
-  return calculate_size(size, baseWidth, baseHeight, g_scale, g_aspectFit);
+  return configured_size(size, baseWidth, baseHeight);
 }
 
 AuroraWindowSize applied_size() {
@@ -177,7 +210,7 @@ State prepare_frame(bool commit) {
         size.native_fb_height = baseHeight;
       }
     }
-    size = calculate_size(size, baseWidth, baseHeight, g_scale, g_aspectFit);
+    size = configured_size(size, baseWidth, baseHeight);
   }
 
   webgpu::resize_efb(size.fb_width, size.fb_height);

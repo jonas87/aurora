@@ -68,5 +68,6 @@ void center_window();
 void notify_frame_buffer_change();
 void set_frame_buffer_scale(float scale);
 void set_frame_buffer_aspect_fit(bool fit);
+void set_frame_buffer_aspect_lock(double aspect);
 void set_background_input(bool value);
 }; // namespace aurora::window
