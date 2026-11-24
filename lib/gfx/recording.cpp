@@ -681,11 +681,12 @@ const XfbImage* displayed_xfb() noexcept {
   return latest;
 }
 
-present::Request record_present(present::TargetSnapshot target, webgpu::TextureWithSampler source,
-                                bool resample = true) {
+// The source fits within the largest part of the target with the area's aspect ratio (0: the whole target).
+present::Request record_present(present::TargetSnapshot target, webgpu::TextureWithSampler source, bool resample = true,
+                                double areaAspect = 0.0) {
   auto& frame = current_frame_packet();
   const auto viewport = webgpu::calculate_present_viewport(target.size.native_fb_width, target.size.native_fb_height,
-                                                           source.size.width, source.size.height);
+                                                           source.size.width, source.size.height, areaAspect);
   if (!resample) {
     return {
         .target = std::move(target),
@@ -778,8 +779,10 @@ void record_xfb_present(imgui::DrawData drawData, wgpu::BindGroup rmlBindGroup, 
     return;
   }
 
+  // With the aspect ratio locked, the frame buffer shows within the locked part of the window, as a console's
+  // within its screen: one shorter than the screen (a letterbox, overscan margins) keeps the screen's width.
   const bool resample = !rmlBindGroup || rmlOverlay;
-  auto request = record_present(efb.xfb, xfb_present_source(), resample);
+  auto request = record_present(efb.xfb, xfb_present_source(), resample, efb::aspect_lock());
   request.primary = true;
   request.imguiDrawData = std::move(drawData);
   request.rmlBindGroup = std::move(rmlBindGroup);

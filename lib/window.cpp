@@ -800,6 +800,17 @@ void set_frame_buffer_aspect_fit(bool fit) {
   notify_frame_buffer_change();
 }
 
+void set_frame_buffer_aspect_lock(double aspect) {
+#ifdef AURORA_ENABLE_GX
+  if (!gfx::efb::set_aspect_lock(aspect)) {
+    return;
+  }
+  notify_frame_buffer_change();
+#else
+  (void)aspect;
+#endif
+}
+
 void set_background_input(bool value) { SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, value ? "1" : "0"); }
 
 } // namespace aurora::window
