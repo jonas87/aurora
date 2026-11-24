@@ -96,6 +96,8 @@ struct RenderPass {
   GXTexFmt resolveFormat = GX_TF_RGBA8;
   GXPixelFmt resolveSourceFormat = GX_PF_RGBA6_Z24;
   ClipRect resolveRect;
+  // The part of the target the copy writes; empty for the whole target.
+  ClipRect resolveDstRect{};
   Range resolveUniformRange;
   wgpu::Texture snapshotColorDst;
   wgpu::TextureView snapshotDepthDst;

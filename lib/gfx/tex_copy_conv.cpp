@@ -781,16 +781,16 @@ static void execute(const wgpu::CommandEncoder& cmd, const ConvRequest& req, con
   pass.End();
 }
 
-void run(const wgpu::CommandEncoder& cmd, const ConvRequest& req) {
+void run(const wgpu::CommandEncoder& cmd, const ConvRequest& req, const ClipRect* dstRect) {
   const auto it = g_pipelines.find(req.fmt);
   if (it == g_pipelines.end()) {
     Log.fatal("No copy conversion pipeline for format {}", static_cast<int>(req.fmt));
   }
-  execute(cmd, req, it->second, req.dst->attachmentTextureView, nullptr);
+  execute(cmd, req, it->second, req.dst->attachmentTextureView, dstRect);
 }
 
-void blit(const wgpu::CommandEncoder& cmd, const ConvRequest& req) {
-  execute(cmd, req, g_blitPipeline, req.dst->attachmentTextureView, nullptr);
+void blit(const wgpu::CommandEncoder& cmd, const ConvRequest& req, const ClipRect* dstRect) {
+  execute(cmd, req, g_blitPipeline, req.dst->attachmentTextureView, dstRect);
 }
 
 void blit_rect(const wgpu::CommandEncoder& cmd, const ConvRequest& req, const wgpu::TextureView& dst,

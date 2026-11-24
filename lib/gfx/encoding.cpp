@@ -254,7 +254,12 @@ void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo,
   pass.End();
 
   if (passInfo.resolveTarget) {
-    const auto& dstSize = passInfo.resolveTarget->size;
+    const bool partial = passInfo.resolveDstRect.width > 0 && passInfo.resolveDstRect.height > 0;
+    const ClipRect* dstRect = partial ? &passInfo.resolveDstRect : nullptr;
+    const wgpu::Extent3D dstSize =
+        partial ? wgpu::Extent3D{.width = static_cast<uint32_t>(passInfo.resolveDstRect.width),
+                                 .height = static_cast<uint32_t>(passInfo.resolveDstRect.height)}
+                : passInfo.resolveTarget->size;
     const bool needsConversion = tex_copy_conv::needs_conversion(passInfo.resolveFormat);
     const bool needsScaling = dstSize.width != static_cast<uint32_t>(passInfo.resolveRect.width) ||
                               dstSize.height != static_cast<uint32_t>(passInfo.resolveRect.height);
@@ -276,9 +281,9 @@ void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo,
     const bool sameFormat =
         passInfo.resolveTarget->format == passInfo.colorAttachments[SceneColorAttachmentIndex].format;
     if (needsConversion) {
-      tex_copy_conv::run(cmd, convReq);
-    } else if (needsScaling || needsOpaqueAlpha || !sameFormat) {
-      tex_copy_conv::blit(cmd, convReq);
+      tex_copy_conv::run(cmd, convReq, dstRect);
+    } else if (partial || needsScaling || needsOpaqueAlpha || !sameFormat) {
+      tex_copy_conv::blit(cmd, convReq, dstRect);
     } else {
       const webgpu::gpu_prof::Zone zone{cmd, "EFB copy"};
       const wgpu::TexelCopyTextureInfo src{

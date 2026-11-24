@@ -585,6 +585,19 @@ GXState::CopyTextureRef resolve_copy_texture(const GXState::CopyTextureKey& key)
   return current;
 }
 
+uint64_t current_frame() noexcept { return s_frameCount; }
+
+void touch_copy_texture(const void* dest) noexcept {
+  const auto it = g_gxState.copyTextures.find(dest);
+  if (it == g_gxState.copyTextures.end()) {
+    return;
+  }
+  if (auto* copy = s_copyCache.find(it->second.key)) {
+    it->second.revision = ++copy->revision;
+  }
+  invalidate_bindings();
+}
+
 size_t texture_source_size(u32 format, u32 width, u32 height, u32 mipCount) noexcept {
   if (width == 0 || height == 0 || mipCount == 0) {
     return 0;

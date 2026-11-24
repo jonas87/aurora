@@ -1121,11 +1121,12 @@ static void resume_pass_after_copy(const RenderPass& prevPass, ClipRect rect, bo
 
 void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
                        Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat,
-                       GXPixelFmt sourceFormat, uint32_t boxFilterTaps) {
+                       GXPixelFmt sourceFormat, uint32_t boxFilterTaps, ClipRect dstRect) {
   // Resolve current render pass
   auto& prevPass = current_render_passes()[g_recorder.currentRenderPass];
   prevPass.resolveTarget = std::move(texture);
   prevPass.resolveRect = rect;
+  prevPass.resolveDstRect = dstRect;
   prevPass.resolveFormat = resolveFormat;
   prevPass.resolveSourceFormat = sourceFormat;
   const auto srcW = static_cast<float>(prevPass.colorAttachments[SceneColorAttachmentIndex].size.width);

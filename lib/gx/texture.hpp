@@ -46,6 +46,9 @@ void end_frame() noexcept;
 void shutdown() noexcept;
 
 GXState::CopyTextureRef resolve_copy_texture(const GXState::CopyTextureKey& key) noexcept;
+uint64_t current_frame() noexcept;
+// The copy made to address dest got new contents in part.
+void touch_copy_texture(const void* dest) noexcept;
 
 // Internal resolvers exposed for cache tests.
 gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj);

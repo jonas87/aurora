@@ -329,6 +329,10 @@ struct GXState {
     u32 width = 0;
     u32 height = 0;
     GXPixelFmt pixelFormat = GX_PF_RGB8_Z24;
+    // The frame of the last copy that made the whole texture, and whether its source gave exactly the
+    // destination's size.
+    uint64_t frame = 0;
+    bool whole = false;
 
     operator bool() const noexcept { return handle.operator bool(); }
   };
