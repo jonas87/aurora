@@ -37,8 +37,9 @@ bool needs_conversion(GXTexFmt fmt);
 
 void initialize();
 void shutdown();
-void run(const wgpu::CommandEncoder& cmd, const ConvRequest& req);
-void blit(const wgpu::CommandEncoder& cmd, const ConvRequest& req);
+// Draws into the request's dst: the whole texture, or only dstRect over its contents.
+void run(const wgpu::CommandEncoder& cmd, const ConvRequest& req, const ClipRect* dstRect = nullptr);
+void blit(const wgpu::CommandEncoder& cmd, const ConvRequest& req, const ClipRect* dstRect = nullptr);
 // Blits into dstRect of dst over its contents; dst has the EFB format. The request's dst is unused.
 void blit_rect(const wgpu::CommandEncoder& cmd, const ConvRequest& req, const wgpu::TextureView& dst,
                const ClipRect& dstRect);

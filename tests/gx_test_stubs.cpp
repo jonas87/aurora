@@ -83,6 +83,9 @@ GXState::CopyTextureRef resolve_copy_texture(const GXState::CopyTextureKey& key)
   ++ref.revision;
   return ref;
 }
+uint64_t current_frame() noexcept { return 0; }
+void touch_copy_texture(const void* dest) noexcept {}
+void reserve_copy_textures(GXTexFmt format, u32 divisor, u32 count, bool paletteResults) noexcept {}
 } // namespace texture
 void evict_texture_object(u32 texObjId) noexcept {
   for (auto& obj : g_gxState.loadedTextures) {
@@ -240,7 +243,7 @@ std::atomic<uint32_t> offscreenHeight{0};
 
 void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
                        Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat,
-                       GXPixelFmt sourceFormat, uint32_t boxFilterTaps) {
+                       GXPixelFmt sourceFormat, uint32_t boxFilterTaps, ClipRect dstRect) {
   testing::resolvePassCount.fetch_add(1, std::memory_order_release);
 }
 void copy_disp(ClipRect rect, const XfbCopy& xfb, bool clearColor, bool clearAlpha, bool clearDepth,

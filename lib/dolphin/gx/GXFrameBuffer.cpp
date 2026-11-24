@@ -1,6 +1,7 @@
 #include "gx.hpp"
 #include "__gx.h"
 
+#include "../../gfx/readback/copy_layout.hpp"
 #include "../../gfx/texture.hpp"
 #include "../../gfx/recording.hpp"
 #include "../../window.hpp"
@@ -10,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 namespace {
 // The lines a display copy of height source lines writes at the Y scale register's value scale.
@@ -52,27 +54,50 @@ aurora::Vec2<uint32_t> scale_copy_dst(u32 logicalWidth, u32 logicalHeight) {
   const auto scaledHeight = std::max<u32>(static_cast<u32>(std::lround(static_cast<float>(logicalHeight) * scaleY)), 1);
   return {scaledWidth, scaledHeight};
 }
+
+// The size a texture copy writes: its source's, or half of it through the box filter. The copy's destination size gives
+// the length of its rows only.
+u32 written_size(s32 source) {
+  const u32 size = static_cast<u32>(std::max(source, 0));
+  return g_gxState.texCopyMipmap ? size / 2 : size;
+}
+
+struct PartialCopy {
+  const void* base;
+  u32 row;
+};
+
+// A copy into part of a larger one that this frame made: rows as long, in the same format, starting at one of its tile
+// rows. In a later frame such a copy replaces the larger one instead.
+std::optional<PartialCopy> find_partial_copy(const void* dest) {
+  const auto format = aurora::gfx::readback::format_info(g_gxState.texCopyFmt);
+  const u32 lines = written_size(g_gxState.texCopySrc.height);
+  if (!format || lines == 0 || written_size(g_gxState.texCopySrc.width) != g_gxState.texCopyDstWidth) {
+    return std::nullopt;
+  }
+  const uintptr_t rowBytes =
+      static_cast<uintptr_t>(aurora::gfx::readback::tiles_x(*format, g_gxState.texCopyDstWidth)) * format->tileBytes;
+  const auto address = reinterpret_cast<uintptr_t>(dest);
+  const auto frame = aurora::gx::texture::current_frame();
+  for (const auto& [base, copy] : g_gxState.copyTextures) {
+    const auto start = reinterpret_cast<uintptr_t>(base);
+    if (!copy || !copy.whole || copy.frame != frame || copy.key.format != g_gxState.texCopyFmt ||
+        copy.width != g_gxState.texCopyDstWidth || address < start || (address - start) % rowBytes != 0) {
+      continue;
+    }
+    const u64 row = static_cast<u64>((address - start) / rowBytes) * format->tileHeight;
+    if (lines < copy.height && row + lines <= copy.height) {
+      return PartialCopy{base, static_cast<u32>(row)};
+    }
+  }
+  return std::nullopt;
+}
 } // namespace
 
 namespace aurora::gx {
 void copy_tex(const void* dest, GXBool clear) noexcept {
   const auto rect = map_logical_scissor(g_gxState.texCopySrc);
-  const auto [dstWidth, dstHeight] = scale_copy_dst(g_gxState.texCopyDstWidth, g_gxState.texCopyDstHeight);
   const auto texCopyFmt = g_gxState.texCopyFmt;
-  const auto copy = texture::resolve_copy_texture({
-      .dest = dest,
-      .width = dstWidth,
-      .height = dstHeight,
-      .format = texCopyFmt,
-  });
-  auto& current = g_gxState.copyTextures[dest];
-  current.width = g_gxState.texCopyDstWidth;
-  current.height = g_gxState.texCopyDstHeight;
-  current.pixelFormat = g_gxState.pixelFmt;
-
-  const auto clearColor = clear && g_gxState.colorUpdate;
-  const auto clearAlpha = clear && g_gxState.alphaUpdate && efb_has_alpha(g_gxState.pixelFmt);
-  const auto clearDepth = clear && g_gxState.depthUpdate;
   // The box filter averages 2x2 logical pixels per texel: at Aurora's render scale, that many more
   // physical ones, so that a scaled copy keeps the filter's footprint.
   u32 boxFilterTaps = 0;
@@ -80,8 +105,53 @@ void copy_tex(const void* dest, GXBool clear) noexcept {
     const float scale = static_cast<float>(rect.width) / static_cast<float>(g_gxState.texCopySrc.width);
     boxFilterTaps = std::max<u32>(2, static_cast<u32>(std::lround(2.f * scale)));
   }
-  gfx::resolve_pass_into(copy.handle, rect, clearColor, clearAlpha, clearDepth, g_gxState.clearColor,
-                         clear_depth_value(), texCopyFmt, g_gxState.pixelFmt, boxFilterTaps);
+  // The copy's own texture at its address, sized by its destination.
+  const auto ownTexture = [&] {
+    const auto [dstWidth, dstHeight] = scale_copy_dst(g_gxState.texCopyDstWidth, g_gxState.texCopyDstHeight);
+    const auto copy = texture::resolve_copy_texture({
+        .dest = dest,
+        .width = dstWidth,
+        .height = dstHeight,
+        .format = texCopyFmt,
+    });
+    auto& current = g_gxState.copyTextures[dest];
+    current.width = g_gxState.texCopyDstWidth;
+    current.height = g_gxState.texCopyDstHeight;
+    current.pixelFormat = g_gxState.pixelFmt;
+    current.frame = texture::current_frame();
+    current.whole = written_size(g_gxState.texCopySrc.width) == current.width &&
+                    written_size(g_gxState.texCopySrc.height) == current.height;
+    return copy.handle;
+  };
+
+  gfx::TextureHandle target;
+  gfx::ClipRect dstRect{};
+  if (const auto part = find_partial_copy(dest)) {
+    // A copy into rows of a larger one also keeps its own texture at its address, for a texture object or a
+    // readback that names it, unless it starts the larger one, whose address that is. It is resolved first and
+    // without clearing, so that it reads the EFB as the copy into the larger one does.
+    if (part->base != dest) {
+      gfx::resolve_pass_into(ownTexture(), rect, false, false, false, g_gxState.clearColor, clear_depth_value(),
+                             texCopyFmt, g_gxState.pixelFmt, boxFilterTaps);
+    }
+    const auto& whole = g_gxState.copyTextures[part->base];
+    const float scale = static_cast<float>(whole.handle->size.height) / static_cast<float>(whole.height);
+    const auto top = static_cast<float>(part->row) * scale;
+    const auto bottom = static_cast<float>(part->row + written_size(g_gxState.texCopySrc.height)) * scale;
+    target = whole.handle;
+    dstRect.y = static_cast<int32_t>(std::lround(top));
+    dstRect.width = static_cast<int32_t>(whole.handle->size.width);
+    dstRect.height = static_cast<int32_t>(std::lround(bottom)) - dstRect.y;
+    texture::touch_copy_texture(part->base);
+  } else {
+    target = ownTexture();
+  }
+
+  const auto clearColor = clear && g_gxState.colorUpdate;
+  const auto clearAlpha = clear && g_gxState.alphaUpdate && efb_has_alpha(g_gxState.pixelFmt);
+  const auto clearDepth = clear && g_gxState.depthUpdate;
+  gfx::resolve_pass_into(target, rect, clearColor, clearAlpha, clearDepth, g_gxState.clearColor, clear_depth_value(),
+                         texCopyFmt, g_gxState.pixelFmt, boxFilterTaps, dstRect);
 }
 
 void copy_disp(GXBool clear, bool yScale) noexcept {

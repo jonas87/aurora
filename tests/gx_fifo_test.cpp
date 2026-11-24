@@ -174,6 +174,33 @@ TEST_F(GXFifoTest, FrameBufferCommandsPublishAfterTheirCompletePayload) {
   aurora::gx::fifo::end_frame();
 }
 
+// A copy into rows of a larger copy made this frame updates those rows, and keeps a texture of its own at its address
+// unless it starts the larger copy. Rows of an RGB565 copy 320 texels wide take 2560 bytes per four.
+TEST_F(GXFifoTest, PartialCopyUpdatesTheLargerCopyAndKeepsItsOwnTexture) {
+  using namespace aurora::gfx::testing;
+  alignas(32) static u8 capture[320 * 240 * 2];
+  u8* const lastRows = capture + 58 * 2560;
+
+  GXSetTexCopySrc(0, 0, 640, 480);
+  GXSetTexCopyDst(320, 240, GX_TF_RGB565, GX_TRUE);
+  GXCopyTex(capture, GX_FALSE);
+  GXSetTexCopySrc(0, 16, 640, 16);
+  GXCopyTex(capture, GX_FALSE);
+  GXSetTexCopySrc(0, 448, 640, 16);
+  GXCopyTex(lastRows, GX_FALSE);
+  auto bytes = capture_fifo();
+
+  reset_gx_state();
+  resolvePassCount.store(0, std::memory_order_relaxed);
+  decode_fifo(bytes);
+
+  EXPECT_EQ(resolvePassCount.load(std::memory_order_acquire), 4u);
+  ASSERT_TRUE(gxState().copyTextures.contains(capture));
+  EXPECT_TRUE(gxState().copyTextures[capture].whole);
+  ASSERT_TRUE(gxState().copyTextures.contains(lastRows));
+  EXPECT_FALSE(gxState().copyTextures[lastRows].whole);
+}
+
 TEST_F(GXFifoTest, DrawDoneProcessesPublishedAndUnpublishedTailBeforeCallback) {
   using namespace aurora::gfx::testing;
   beginOffscreenCount.store(0, std::memory_order_relaxed);

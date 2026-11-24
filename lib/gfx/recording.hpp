@@ -116,10 +116,11 @@ template <typename PipelineConfig>
 PipelineRef pipeline_ref(const PipelineConfig& config);
 
 // boxFilterTaps: 0 for a plain copy, else the number of source pixels per side that each texel
-// averages (the copy's box filter).
+// averages (the copy's box filter). dstRect: the part of the texture to write, over its contents;
+// empty for the whole texture.
 void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
                        Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat,
-                       GXPixelFmt sourceFormat, uint32_t boxFilterTaps = 0);
+                       GXPixelFmt sourceFormat, uint32_t boxFilterTaps = 0, ClipRect dstRect = {});
 // A display copy's place in the emulated XFB: the frame buffer in main memory it writes into.
 struct XfbCopy {
   // The copy's destination address and the frame buffer's line pitch in bytes.
