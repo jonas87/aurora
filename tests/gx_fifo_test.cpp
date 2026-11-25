@@ -1800,7 +1800,27 @@ TEST_F(GXFifoTest, LoadTexObjCiAndTlut_PopulatesTextureAndTlutSlots) {
   EXPECT_EQ(tlutSlot.format, GX_TL_RGB565);
   EXPECT_EQ(tlutSlot.numEntries, 16u);
   EXPECT_NE(tlutSlot.tlutObjId, 0u);
-  EXPECT_EQ(tlutSlot.tlutDataVersion, 1u);
+  EXPECT_NE(tlutSlot.tlutDataVersion, 0u);
+}
+
+// GXLoadTlut reads the palette from main memory at each load: its version follows the palette's contents, the same
+// for the same contents and new once they are rewritten in place.
+TEST_F(GXFifoTest, LoadTlut_VersionFollowsPaletteContents) {
+  alignas(32) u16 palette[16]{};
+  GXTlutObj tlutObj{};
+  GXInitTlutObj(&tlutObj, palette, GX_TL_RGB565, 16);
+
+  const auto loadedVersion = [&] {
+    GXLoadTlut(&tlutObj, GX_TLUT3);
+    auto bytes = capture_fifo();
+    reset_gx_state();
+    decode_fifo(bytes);
+    return gxState().loadedTluts[GX_TLUT3].tlutDataVersion;
+  };
+  const u32 first = loadedVersion();
+  EXPECT_EQ(loadedVersion(), first);
+  palette[0] = 0xF800;
+  EXPECT_NE(loadedVersion(), first);
 }
 
 TEST_F(GXFifoTest, TlutExecute_ReappliesSameTargetAfterSourceChanges) {

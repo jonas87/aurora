@@ -1,6 +1,7 @@
 #include "gx.hpp"
 #include "__gx.h"
 
+#include "../../gfx/hash.hpp"
 #include "../../gfx/texture.hpp"
 #include "dolphin/gx/GXAurora.h"
 
@@ -91,6 +92,15 @@ void emit_loaded_texobj_metadata(const GXTexObj_& obj, GXTexMapID id) {
   GX_WRITE_U32(obj.texDataVersion);
 }
 
+// GXLoadTlut copies the palette from main memory each time, so a palette rewritten in place shows at its next load: its
+// contents are part of its version.
+u32 loaded_tlut_version(const GXTlutObj_& obj) {
+  if (obj.data == nullptr) {
+    return obj.tlutDataVersion;
+  }
+  return aurora::xxh3_hash_s(obj.data, static_cast<size_t>(obj.numEntries) * sizeof(u16), obj.tlutDataVersion);
+}
+
 void emit_loaded_tlut_metadata(const GXTlutObj_& obj, u32 idx) {
   GX_WRITE_AURORA(GX_AURORA_LOAD_TLUT);
   GX_WRITE_U8(static_cast<u8>(idx));
@@ -98,7 +108,7 @@ void emit_loaded_tlut_metadata(const GXTlutObj_& obj, u32 idx) {
   GX_WRITE_U32(static_cast<u32>(obj.format));
   GX_WRITE_U16(obj.numEntries);
   GX_WRITE_U32(obj.tlutObjId);
-  GX_WRITE_U32(obj.tlutDataVersion);
+  GX_WRITE_U32(loaded_tlut_version(obj));
 }
 } // namespace
 

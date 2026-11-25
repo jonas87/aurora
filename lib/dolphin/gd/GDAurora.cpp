@@ -54,5 +54,7 @@ void GDLoadTlut(const GXTlutObj* obj_, u32 idx) {
   GDWrite_u32(static_cast<u32>(obj->format));
   GDWrite_u16(obj->numEntries);
   GDWrite_u32(obj->tlutObjId);
+  // The version as the list is built: unlike GXLoadTlut, whose version follows the palette's contents at each load,
+  // a display list cannot see a palette rewritten in place after it was built; a new palette object (or version) can.
   GDWrite_u32(obj->tlutDataVersion);
 }
