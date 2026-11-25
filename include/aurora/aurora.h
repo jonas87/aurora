@@ -167,6 +167,11 @@ typedef struct {
   AuroraLogLevel logLevel;
   AuroraImGuiInitCallback imGuiInitCallback;
   AuroraGxProcessingMode gxProcessingMode;
+  /*
+   * The threads that compile pipelines; 0 takes one. More compile a large cache (a game's prepared pipelines before
+   * play) in a fraction of the time, but compete with the game's own threads when pipelines compile during play.
+   */
+  uint32_t pipelineThreads;
 
   /*
    * The size of the GameCube's main memory, or MEM1 on the Wii.

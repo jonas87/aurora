@@ -80,7 +80,7 @@ constexpr size_t BuildPipelinesPerFrame = 5;
 #else
 constexpr size_t BuildPipelinesPerFrame = 1;
 #endif
-static std::thread g_pipelineThread;
+static std::vector<std::thread> g_pipelineThreads;
 static std::atomic_bool g_pipelineThreadEnd = false;
 static std::condition_variable g_pipelineQueueCv;
 static std::condition_variable g_pipelineReadyCv;
@@ -960,17 +960,13 @@ static void pipeline_worker() {
   tracy::SetThreadName("Pipeline compilation thread");
 #endif
 
-  bool hasMore = false;
   while (g_hasPipelineThread || g_pipelinesPerFrame < BuildPipelinesPerFrame) {
     PendingPipeline pending;
     {
       std::unique_lock lock{g_pipelineMutex};
       if (g_hasPipelineThread) {
-        if (!hasMore) {
-          g_pipelineQueueCv.wait(lock, [] {
-            return !g_pipelineQueue.empty() || !g_backgroundPipelineQueue.empty() || g_pipelineThreadEnd;
-          });
-        }
+        g_pipelineQueueCv.wait(
+            lock, [] { return !g_pipelineQueue.empty() || !g_backgroundPipelineQueue.empty() || g_pipelineThreadEnd; });
       } else if (g_pipelineQueue.empty() && g_backgroundPipelineQueue.empty()) {
         return;
       }
@@ -987,7 +983,6 @@ static void pipeline_worker() {
       std::lock_guard lock{g_pipelineMutex};
       g_pipelines.try_emplace(pending.hash, std::move(result));
       g_pendingPipelines.erase(pending.hash);
-      hasMore = !g_pipelineQueue.empty() || !g_backgroundPipelineQueue.empty();
     }
     if (!g_hasPipelineThread) {
       g_pipelinesPerFrame += std::max(1u, pipelineCount);
@@ -1136,6 +1131,9 @@ void rebuild_pipeline_cache() {
   }
 }
 
+// The compilation threads: the program's choice (AuroraConfig::pipelineThreads), or one.
+static size_t pipeline_thread_count() { return std::max<size_t>(g_config.pipelineThreads, 1); }
+
 void initialize_pipeline_cache() {
   g_pipelineCacheBroken = false;
   g_pipelineCacheWriterStop = false;
@@ -1146,7 +1144,11 @@ void initialize_pipeline_cache() {
     g_hasPipelineThread = false;
   } else {
     g_hasPipelineThread = true;
-    g_pipelineThread = std::thread(pipeline_worker);
+    const size_t threadCount = pipeline_thread_count();
+    g_pipelineThreads.reserve(threadCount);
+    for (size_t i = 0; i < threadCount; ++i) {
+      g_pipelineThreads.emplace_back(pipeline_worker);
+    }
   }
 
   const size_t loadedCount = load_pipeline_cache();
@@ -1165,7 +1167,10 @@ void shutdown_pipeline_cache() {
     g_pipelineThreadEnd = true;
     g_pipelineQueueCv.notify_all();
     g_pipelineReadyCv.notify_all();
-    g_pipelineThread.join();
+    for (auto& thread : g_pipelineThreads) {
+      thread.join();
+    }
+    g_pipelineThreads.clear();
   }
   g_hasPipelineThread = false;
 
