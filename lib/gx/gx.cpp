@@ -388,6 +388,54 @@ wgpu::RenderPipeline build_pipeline(const PipelineConfig& config, const gfx::Ren
   return g_device.CreateRenderPipeline(&descriptor);
 }
 
+// The constant selectors keep what an earlier draw left in them. A stage that takes no constant does not read them, so
+// they are cleared: the same shader then has one key.
+static void clear_unused_constants(TevStage& stage) {
+  const auto& color = stage.colorPass;
+  const auto& alpha = stage.alphaPass;
+  if (color.a != GX_CC_KONST && color.b != GX_CC_KONST && color.c != GX_CC_KONST && color.d != GX_CC_KONST) {
+    stage.kcSel = GX_TEV_KCSEL_1;
+  }
+  if (alpha.a != GX_CA_KONST && alpha.b != GX_CA_KONST && alpha.c != GX_CA_KONST && alpha.d != GX_CA_KONST) {
+    stage.kaSel = GX_TEV_KASEL_1;
+  }
+}
+
+// The color channels (0 and 1, each with its alpha channel) that a stage or a texture coordinate reads.
+static std::array<bool, 2> read_color_channels(const ShaderConfig& config) {
+  std::array<bool, 2> read{};
+  const auto is_raster_color = [](GXTevColorArg arg) { return arg == GX_CC_RASC || arg == GX_CC_RASA; };
+  for (u32 i = 0; i < config.tevStageCount; ++i) {
+    const auto& stage = config.tevStages[i];
+    const auto& color = stage.colorPass;
+    const auto& alpha = stage.alphaPass;
+    if (!is_raster_color(color.a) && !is_raster_color(color.b) && !is_raster_color(color.c) &&
+        !is_raster_color(color.d) && alpha.a != GX_CA_RASA && alpha.b != GX_CA_RASA && alpha.c != GX_CA_RASA &&
+        alpha.d != GX_CA_RASA) {
+      continue;
+    }
+    switch (stage.channelId) {
+    case GX_COLOR0:
+    case GX_ALPHA0:
+    case GX_COLOR0A0:
+      read[0] = true;
+      break;
+    case GX_COLOR1:
+    case GX_ALPHA1:
+    case GX_COLOR1A1:
+      read[1] = true;
+      break;
+    default:
+      break;
+    }
+  }
+  for (const auto& tcg : config.tcgs) {
+    read[0] = read[0] || tcg.src == GX_TG_COLOR0;
+    read[1] = read[1] || tcg.src == GX_TG_COLOR1;
+  }
+  return read;
+}
+
 void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXVtxFmt fmt) noexcept {
   ZoneScoped;
 
@@ -449,15 +497,23 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
   config.shaderConfig.tevSwapTable = g_gxState.tevSwapTable;
   for (u8 i = 0; i < g_gxState.numTevStages; ++i) {
     config.shaderConfig.tevStages[i] = g_gxState.tevStages[i];
+    clear_unused_constants(config.shaderConfig.tevStages[i]);
   }
   config.shaderConfig.tevStageCount = g_gxState.numTevStages;
   for (u8 i = 0; i < g_gxState.numIndStages; ++i) {
     config.shaderConfig.indStages[i] = g_gxState.indStages[i];
   }
   config.shaderConfig.numIndStages = g_gxState.numIndStages;
+  for (u8 i = 0; i < g_gxState.numTexGens; ++i) {
+    config.shaderConfig.tcgs[i] = g_gxState.tcgs[i];
+  }
+  const auto readChannels = read_color_channels(config.shaderConfig);
   for (u8 i = 0; i < MaxColorChannels; ++i) {
     const auto& cc = g_gxState.colorChannelConfig[i];
-    if (cc.lightingEnabled) {
+    if (!readChannels[i % GX_ALPHA0]) {
+      // The shader has no code for a channel that nothing reads.
+      config.shaderConfig.colorChannels[i] = {};
+    } else if (cc.lightingEnabled) {
       config.shaderConfig.colorChannels[i] = cc;
     } else {
       // Only matSrc matters when lighting disabled
@@ -465,9 +521,6 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
           .matSrc = cc.matSrc,
       };
     }
-  }
-  for (u8 i = 0; i < g_gxState.numTexGens; ++i) {
-    config.shaderConfig.tcgs[i] = g_gxState.tcgs[i];
   }
   if (g_gxState.alphaCompare) {
     config.shaderConfig.alphaCompare = g_gxState.alphaCompare;
