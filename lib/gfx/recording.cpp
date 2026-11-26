@@ -596,8 +596,9 @@ uintptr_t xfb_end(const XfbImage& image) noexcept { return image.base + uintptr_
 
 // The image a display copy writes into. A copy into the lines of a frame buffer that an earlier
 // copy of this frame started (a frame drawn in parts) continues it. Any other copy starts the
-// frame buffer at its own address, sized for the lines the video interface shows, and drops the
-// frame buffers whose first line it overwrites.
+// frame buffer at its own address, sized for the lines the video interface shows (a copy's lines
+// past them are clipped, as the display shows none of them; without a video mode, for the copy's),
+// and drops the frame buffers whose first line it overwrites.
 XfbImage& acquire_xfb(const XfbCopy& copy, uint64_t frameId) {
   for (auto& image : g_xfbImages) {
     if (image.startFrame == frameId && image.stride == copy.stride && copy.dest >= image.base &&
@@ -617,7 +618,7 @@ XfbImage& acquire_xfb(const XfbCopy& copy, uint64_t frameId) {
   }
   it->base = copy.dest;
   it->stride = copy.stride;
-  it->lines = std::max(copy.fbLines, copy.lines);
+  it->lines = copy.fbLines != 0 ? copy.fbLines : copy.lines;
   it->startFrame = frameId;
   it->startOrder = ++g_xfbStartCount;
   return *it;
