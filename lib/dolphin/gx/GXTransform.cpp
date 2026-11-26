@@ -145,8 +145,11 @@ void GXSetViewportJitter(float left, float top, float width, float height, float
   sy = -height / 2.0f;
   ox = 340.0f + (left + width / 2.0f);
   oy = 340.0f + (top + height / 2.0f);
-  zmin = std::clamp(__gx->zScale * nearZ + __gx->zOffset, 0.0f, 1.6777215e7f);
-  zmax = std::clamp(__gx->zScale * farZ + __gx->zOffset, 0.0f, 1.6777215e7f);
+  // Not clamped: the hardware saturates each pixel's depth at the buffer's ends, so a range past
+  // them (a far value of 10, say, for a backdrop) puts most of the geometry at the far end. The
+  // renderer applies such a range (gfx::depth_range_outside).
+  zmin = __gx->zScale * nearZ + __gx->zOffset;
+  zmax = __gx->zScale * farZ + __gx->zOffset;
   sz = zmax - zmin;
   oz = zmax;
 

@@ -242,6 +242,10 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
     info.uniformSize += sizeof(Vec4<float>); // coplanar_depth
     info.coplanar = true;
   }
+  if (config.depthRange) {
+    info.uniformSize += sizeof(Vec4<float>); // depth_range
+    info.depthRange = true;
+  }
   if (config.lineMode != 0) {
     info.uniformSize += 4 + 4 + 4 + 4; // line_width, line_aspect_y, line_tex_offset, line_texcoord_mask
     info.lineMode = config.lineMode;
@@ -507,8 +511,10 @@ static Vec4<float> coplanar_window_plane() noexcept {
   const auto& vp = g_gxState.renderViewport;
   const double width = std::max(static_cast<double>(vp.width), 1.0);
   const double height = std::max(static_cast<double>(vp.height), 1.0);
-  const double minDepth = UseReversedZ ? 1.0 - vp.zfar : vp.znear;
-  const double maxDepth = UseReversedZ ? 1.0 - vp.znear : vp.zfar;
+  // A depth range outside [0, 1] is applied in the fragment stage over the whole range.
+  const bool outside = gfx::depth_range_outside(vp);
+  const double minDepth = outside ? 0.0 : UseReversedZ ? 1.0 - vp.zfar : vp.znear;
+  const double maxDepth = outside ? 1.0 : UseReversedZ ? 1.0 - vp.znear : vp.zfar;
   const double range = maxDepth - minDepth;
   const double a = g_gxState.coplanarPlane[0];
   const double b = g_gxState.coplanarPlane[1];
@@ -530,6 +536,10 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
   if (info.coplanar) {
     buf.append(g_gxState.coplanarPlane);
     buf.append(coplanar_window_plane());
+  }
+  if (info.depthRange) {
+    const auto& vp = g_gxState.renderViewport;
+    buf.append(Vec4{vp.znear, vp.zfar - vp.znear, 0.f, 0.f});
   }
   if (info.latchedNbt) {
     buf.append(g_gxState.latchedTangent);

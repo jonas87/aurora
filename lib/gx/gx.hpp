@@ -537,8 +537,9 @@ struct ShaderConfig {
   u8 vtxStride = 0;
   u8 lineMode : 2 = 0; // 1 = GX_LINES, 2 = GX_LINESTRIP, 3 = GX_POINTS
   u8 fogRangeEnabled : 1 = false;
-  u8 coplanar : 1 = false; // depth from the latched co-planar plane (ZFreeze)
-  u8 pad1 : 4 = 0;
+  u8 coplanar : 1 = false;   // depth from the latched co-planar plane (ZFreeze)
+  u8 depthRange : 1 = false; // the viewport's depth range leaves [0, 1] (depth_range_outside)
+  u8 pad1 : 3 = 0;
   u8 pad2 = 0;
   std::array<AttrConfig, MaxVtxAttr> attrs;
   std::array<TevSwap, MaxTevSwap> tevSwapTable;
@@ -578,6 +579,7 @@ struct ShaderInfo {
   bool lightingEnabled : 1 = false;
   u8 lineMode : 2 = 0;
   bool coplanar : 1 = false;
+  bool depthRange : 1 = false;
   // A texgen reads the binormal and tangent, and the vertex does not carry them: they come from
   // the latched ones.
   bool latchedNbt : 1 = false;

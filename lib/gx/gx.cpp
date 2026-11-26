@@ -319,6 +319,11 @@ void set_render_viewport(const gfx::Viewport& viewport) noexcept {
   if (viewport != g_gxState.renderViewport) {
     g_gxState.dirty |= DirtyUniform;
   }
+  // A depth range past [0, 1] is applied in the fragment stage, a choice the pipeline makes
+  // (ShaderConfig::depthRange): the pipeline is chosen again when a range crosses the bounds.
+  if (gfx::depth_range_outside(viewport) != gfx::depth_range_outside(g_gxState.renderViewport)) {
+    g_gxState.dirty |= DirtyPipeline;
+  }
   g_gxState.renderViewport = viewport;
   gfx::set_viewport(viewport);
 }
@@ -527,6 +532,7 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
   }
   config.shaderConfig.coplanar =
       config.shaderConfig.lineMode == 0 && g_gxState.coplanar && g_gxState.coplanarPlaneValid;
+  config.shaderConfig.depthRange = gfx::depth_range_outside(g_gxState.renderViewport);
   const auto cullMode = config.shaderConfig.lineMode == 0 ? g_gxState.cullMode : GX_CULL_NONE;
   const auto [polygonOffset, polygonOffsetScale] = polygon_offset_for_cull_mode(cullMode);
   const bool hasAlpha = efb_has_alpha(g_gxState.pixelFmt);
