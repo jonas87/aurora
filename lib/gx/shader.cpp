@@ -945,6 +945,9 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
         "\n    coplanar_plane: vec4f,"
         "\n    coplanar_depth: vec4f,";
   }
+  if (config.depthRange) {
+    uniBufAttrs += "\n    depth_range: vec4f,";
+  }
   if (info.latchedNbt) {
     uniBufAttrs +=
         "\n    latched_tangent: vec4f,"
@@ -1678,13 +1681,28 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
     fragmentReturn = "\n    return FragmentOutput(vec4f(prev.rgb, 1.0), prev);";
   }
 
-  if (config.coplanar) {
-    // ZFreeze: the depth is the latched plane's at the pixel (coplanar_window_plane), the same for
-    // every co-planar primitive covering it, so equal and less-equal compares between them hold as
-    // on the hardware. The vertex stage's plane depth still decides clipping.
-    fragmentFn +=
-        "\n    let coplanar_frag_depth = ubuf.coplanar_depth.x * in.pos.x + ubuf.coplanar_depth.y * in.pos.y +"
-        " ubuf.coplanar_depth.z;";
+  if (config.coplanar || config.depthRange) {
+    std::string_view depth = "in.pos.z"sv;
+    if (config.coplanar) {
+      // ZFreeze: the depth is the latched plane's at the pixel (coplanar_window_plane), the same for
+      // every co-planar primitive covering it, so equal and less-equal compares between them hold as
+      // on the hardware. The vertex stage's plane depth still decides clipping.
+      fragmentFn +=
+          "\n    let coplanar_frag_depth = ubuf.coplanar_depth.x * in.pos.x + ubuf.coplanar_depth.y * in.pos.y +"
+          " ubuf.coplanar_depth.z;";
+      depth = "coplanar_frag_depth"sv;
+    }
+    if (config.depthRange) {
+      // A viewport depth range outside [0, 1] (the GameCube takes any): the rasteriser's viewport
+      // spans [0, 1], and the depth is taken to the range here, saturating at its ends as the
+      // hardware's 24-bit depth does. Clipping is the projection's, as on the hardware.
+      fragmentFn += fmt::format(
+          UseReversedZ
+              ? "\n    let range_frag_depth = 1.0 - clamp(ubuf.depth_range.x + ubuf.depth_range.y * (1.0 - {0}), 0.0, 1.0);"
+              : "\n    let range_frag_depth = clamp(ubuf.depth_range.x + ubuf.depth_range.y * {0}, 0.0, 1.0);",
+          depth);
+      depth = "range_frag_depth"sv;
+    }
     if (dstAlphaMode == DstAlphaMode::DualSource) {
       fragmentOutput =
           "\nstruct FragmentOutput {\n"
@@ -1692,7 +1710,7 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
           "    @location(0) @blend_src(1) blend: vec4f,\n"
           "    @builtin(frag_depth) depth: f32,\n"
           "};\n";
-      fragmentReturn = "\n    return FragmentOutput(vec4f(prev.rgb, 1.0), prev, coplanar_frag_depth);";
+      fragmentReturn = fmt::format("\n    return FragmentOutput(vec4f(prev.rgb, 1.0), prev, {});", depth);
     } else if (normalAttachment != UINT32_MAX) {
       fragmentOutput = fmt::format(
           "\nstruct FragmentOutput {{\n"
@@ -1702,14 +1720,14 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
           "}};\n",
           normalAttachment);
       const auto returnPos = fragmentReturn.rfind("\n    return out;");
-      fragmentReturn.insert(returnPos, "\n    out.depth = coplanar_frag_depth;");
+      fragmentReturn.insert(returnPos, fmt::format("\n    out.depth = {};", depth));
     } else {
       fragmentOutput =
           "\nstruct FragmentOutput {\n"
           "    @location(0) color: vec4f,\n"
           "    @builtin(frag_depth) depth: f32,\n"
           "};\n";
-      fragmentReturn = "\n    return FragmentOutput(prev, coplanar_frag_depth);";
+      fragmentReturn = fmt::format("\n    return FragmentOutput(prev, {});", depth);
     }
     fragmentOutputType = "FragmentOutput"sv;
   }

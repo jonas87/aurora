@@ -36,8 +36,11 @@ constexpr Module Log{"aurora::gfx"};
 WGPURenderPipeline g_currentPipeline = nullptr;
 
 void apply_viewport(const wgpu::RenderPassEncoder& pass, const Viewport& vp) {
-  const float minDepth = gx::UseReversedZ ? 1.f - vp.zfar : vp.znear;
-  const float maxDepth = gx::UseReversedZ ? 1.f - vp.znear : vp.zfar;
+  // A depth range outside [0, 1] spans the whole range here; the GX pipelines drawn with it apply
+  // the range themselves (depth_range_outside).
+  const bool outside = depth_range_outside(vp);
+  const float minDepth = outside ? 0.f : gx::UseReversedZ ? 1.f - vp.zfar : vp.znear;
+  const float maxDepth = outside ? 1.f : gx::UseReversedZ ? 1.f - vp.znear : vp.zfar;
   pass.SetViewport(vp.left, vp.top, vp.width, vp.height, minDepth, maxDepth);
 }
 

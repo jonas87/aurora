@@ -34,6 +34,12 @@ struct ClipRect {
 
 using webgpu::Viewport;
 
+// Whether a viewport's depth range leaves [0, 1]. GX takes any range and saturates the depth at
+// the 24-bit buffer's ends; the GPU's viewport cannot, so such draws apply the range themselves.
+inline bool depth_range_outside(const Viewport& viewport) {
+  return viewport.znear < 0.f || viewport.zfar > 1.f || viewport.znear > 1.f || viewport.zfar < 0.f;
+}
+
 struct TextureRef;
 using TextureHandle = std::shared_ptr<TextureRef>;
 using AfterSubmitCallback = std::function<void()>;
