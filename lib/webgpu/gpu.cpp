@@ -319,6 +319,25 @@ Viewport calculate_present_viewport(uint32_t surface_width, uint32_t surface_hei
   };
 }
 
+Viewport calculate_present_viewport(uint32_t surface_width, uint32_t surface_height, uint32_t content_width,
+                                    uint32_t content_height, double area_aspect) noexcept {
+  if (!std::isfinite(area_aspect) || area_aspect <= 0.0 || surface_width == 0 || surface_height == 0) {
+    return calculate_present_viewport(surface_width, surface_height, content_width, content_height);
+  }
+
+  uint32_t area_width = surface_width;
+  uint32_t area_height = surface_height;
+  if (surface_width > surface_height * area_aspect) {
+    area_width = std::max<uint32_t>(1u, static_cast<uint32_t>(std::lround(surface_height * area_aspect)));
+  } else {
+    area_height = std::max<uint32_t>(1u, static_cast<uint32_t>(std::lround(surface_width / area_aspect)));
+  }
+  auto viewport = calculate_present_viewport(area_width, area_height, content_width, content_height);
+  viewport.left += static_cast<float>((surface_width - area_width) / 2);
+  viewport.top += static_cast<float>((surface_height - area_height) / 2);
+  return viewport;
+}
+
 static TextureWithSampler create_depth_texture(uint32_t width, uint32_t height) {
   const wgpu::Extent3D size{
       .width = width,

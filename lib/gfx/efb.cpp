@@ -150,6 +150,11 @@ bool set_aspect_lock(double aspect) {
   return true;
 }
 
+double aspect_lock() {
+  std::lock_guard lock{g_configMutex};
+  return g_aspectLock;
+}
+
 AuroraWindowSize resolve_size(AuroraWindowSize size) {
   const auto [baseWidth, baseHeight] = vi::configured_fb_size();
   std::lock_guard lock{g_configMutex};

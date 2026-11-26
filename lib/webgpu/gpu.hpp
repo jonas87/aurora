@@ -70,6 +70,10 @@ void set_resampler(AuroraSampler sampler) noexcept;
 AuroraSampler get_resampler() noexcept;
 Viewport calculate_present_viewport(uint32_t surface_width, uint32_t surface_height, uint32_t content_width,
                                     uint32_t content_height) noexcept;
+// The same within the largest part of the surface with the given aspect ratio (width / height), centered on the
+// surface; with an aspect ratio of 0, within the whole surface.
+Viewport calculate_present_viewport(uint32_t surface_width, uint32_t surface_height, uint32_t content_width,
+                                    uint32_t content_height, double area_aspect) noexcept;
 struct ResampleUniformBlock {
   uint32_t samplerMode = 0;
   float frameWidth = 0.f;

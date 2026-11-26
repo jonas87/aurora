@@ -34,5 +34,7 @@ bool set_scale(float scale);
 bool set_aspect_fit(bool fit);
 // Locks the framebuffer to a display aspect ratio (width / height); 0 unlocks it.
 bool set_aspect_lock(double aspect);
+// The locked display aspect ratio, or 0.
+double aspect_lock();
 
 } // namespace aurora::gfx::efb
