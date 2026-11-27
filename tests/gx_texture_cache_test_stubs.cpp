@@ -18,6 +18,7 @@ namespace {
 uint64_t s_textureAllocations = 0;
 uint64_t s_paletteConversions = 0;
 uint64_t s_copyAllocations = 0;
+uint64_t s_textureWrites = 0;
 aurora::gfx::TextureHandle s_replacement;
 std::optional<aurora::texture::TextureSourceKey> s_sourceKey;
 aurora::gfx::TextureHandle s_sourceReplacement;
@@ -52,6 +53,7 @@ void reset_texture_stubs() {
   s_textureAllocations = 0;
   s_paletteConversions = 0;
   s_copyAllocations = 0;
+  s_textureWrites = 0;
   s_replacement.reset();
   s_sourceKey.reset();
   s_sourceReplacement.reset();
@@ -62,6 +64,7 @@ void reset_texture_stubs() {
 uint64_t texture_allocations() { return s_textureAllocations; }
 uint64_t palette_conversions() { return s_paletteConversions; }
 uint64_t copy_allocations() { return s_copyAllocations; }
+uint64_t texture_writes() { return s_textureWrites; }
 void set_replacement(gfx::TextureHandle handle, uint64_t id) {
   s_replacement = std::move(handle);
   s_replacementId = id;
@@ -104,6 +107,8 @@ TextureHandle new_render_texture(uint32_t width, uint32_t height, u32 gxFormat, 
   ++s_copyAllocations;
   return gx::testing::make_texture_handle(width, height, gxFormat);
 }
+
+void write_texture(TextureRef& ref, ArrayRef<uint8_t> data) noexcept { ++s_textureWrites; }
 
 ConvertedTexture convert_texture_palette(u32 textureFormat, uint32_t width, uint32_t height, uint32_t mips,
                                          ArrayRef<uint8_t> textureData, GXTlutFmt tlutFormat, uint16_t tlutEntries,

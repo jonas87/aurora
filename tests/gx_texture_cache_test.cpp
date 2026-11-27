@@ -14,6 +14,7 @@ void reset_texture_stubs();
 uint64_t texture_allocations();
 uint64_t palette_conversions();
 uint64_t copy_allocations();
+uint64_t texture_writes();
 gfx::TextureHandle make_texture_handle(uint32_t width, uint32_t height, u32 format = GX_TF_RGBA8_PC);
 void set_replacement(gfx::TextureHandle handle, uint64_t id = 1);
 void set_source_replacement(aurora::texture::TextureSourceKey key, gfx::TextureHandle handle);
@@ -97,6 +98,28 @@ TEST_F(GxTextureCacheTest, ResolvesAgainWhenTheFilterAddsMipLevels) {
   const auto chain = texture::resolve_static_texture(obj);
   ASSERT_TRUE(chain);
   EXPECT_EQ(chain->mipCount, 3u);
+}
+
+// A streamed object rewrites its texture in place, so it takes one of its own: a texture it had through the content
+// cache may be another object's too.
+TEST_F(GxTextureCacheTest, StreamedObjectRewritesOnlyATextureOfItsOwn) {
+  std::array<uint8_t, 16> still{};
+  std::array<uint8_t, 16> movie{};
+  const auto other = texture::resolve_static_texture(make_texture(still.data(), 1));
+  auto obj = make_texture(movie.data(), 2);
+  ASSERT_EQ(texture::resolve_static_texture(obj), other);
+
+  obj.set_streaming(true);
+  movie[0] = 1;
+  obj.texDataVersion = 2;
+  const auto own = texture::resolve_static_texture(obj);
+  EXPECT_NE(own, other);
+  EXPECT_EQ(testing::texture_writes(), 0u);
+
+  movie[0] = 2;
+  obj.texDataVersion = 3;
+  EXPECT_EQ(texture::resolve_static_texture(obj), own);
+  EXPECT_EQ(testing::texture_writes(), 1u);
 }
 
 TEST_F(GxTextureCacheTest, ReusesIdenticalContentAtDifferentAddresses) {

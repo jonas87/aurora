@@ -41,7 +41,7 @@ void GDLoadTexObj(const GXTexObj* obj_, GXTexMapID id) {
   GDWrite_u32(obj->height());
   GDWrite_u32(obj->format());
   GDWrite_u32(static_cast<u32>(obj->tlut));
-  GDWrite_u8(static_cast<u8>(obj->has_mips()));
+  GDWrite_u8(obj->load_flags());
   GDWrite_u32(obj->texObjId);
   GDWrite_u32(obj->texDataVersion);
 }
