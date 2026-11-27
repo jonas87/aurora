@@ -50,6 +50,11 @@ uint64_t current_frame() noexcept;
 // The copy made to address dest got new contents in part.
 void touch_copy_texture(const void* dest) noexcept;
 
+// Starts converting the static texture's image on a background thread, from a copy of its data taken now, so that its
+// first use only uploads it (GXPrepareTexObj). For an image that does not change afterwards; palette formats are left
+// to their first use.
+void prepare_static_texture(const GXTexObj_& obj) noexcept;
+
 // Internal resolvers exposed for cache tests.
 gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj);
 gfx::TextureHandle resolve_static_palette_texture(const GXTexObj_& obj, const GXTlutObj_& tlut);

@@ -57,4 +57,9 @@ ConvertedTexture convert_texture_palette(u32 textureFormat, uint32_t width, uint
                                          ArrayRef<uint8_t> tlutData);
 ConvertedTexture convert_tlut(u32 format, uint32_t width, ArrayRef<uint8_t> data);
 GXTexFmt tlut_texture_format(GXTlutFmt format) noexcept;
+
+// A static texture from an image convert_texture has already converted (non-empty data), as
+// new_static_texture_2d would create it from the source.
+TextureHandle new_converted_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 format,
+                                       const ConvertedTexture& converted, const char* label) noexcept;
 } // namespace aurora::gfx
