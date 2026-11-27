@@ -19,8 +19,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <optional>
 #include <utility>
+#include <vector>
 
 namespace aurora::gx {
 namespace {
@@ -135,6 +137,58 @@ gfx::LruCache<GXState::CopyTextureKey, GXState::CopyTextureRef> s_copyCache{
     gfx::RenderTextureCacheLimits,
     retire_copy_texture,
 };
+
+// Textures created ahead for copies of the frame (reserve_copy_textures): a copy, or a palette's reading of one, takes
+// a spare of its size and format instead of creating its texture in its frame.
+enum class SpareKind : uint8_t { Copy, PaletteResult };
+
+struct SpareTexture {
+  size_t reservation;
+  SpareKind kind;
+  u32 width;
+  u32 height;
+  u32 format;
+  gfx::TextureHandle handle;
+};
+
+// A reservation: count spares for copies in format whose destination is the logical frame buffer divided by divisor,
+// and as many palette results; width and height are the render target size of the spares made last.
+struct CopyReservation {
+  GXTexFmt format;
+  u32 divisor;
+  u32 count;
+  bool paletteResults;
+  u32 width = 0;
+  u32 height = 0;
+};
+
+std::mutex s_spareMutex;
+std::vector<CopyReservation> s_copyReservations;
+std::vector<SpareTexture> s_spareTextures;
+
+gfx::TextureHandle create_copy_texture(u32 width, u32 height, GXTexFmt format) {
+  return gfx::tex_copy_conv::needs_conversion(format)
+             ? gfx::new_conv_texture(width, height, format, "Copy Conv Texture")
+             : gfx::new_render_texture(width, height, GX_TF_RGBA8, "Resolved Texture");
+}
+
+gfx::TextureHandle create_palette_result_texture(u32 width, u32 height) {
+  return gfx::new_conv_texture(width, height, GX_TF_RGBA8, "GX Dynamic Palette Texture");
+}
+
+// A spare of this kind, size and format, or none.
+gfx::TextureHandle take_spare_texture(SpareKind kind, u32 width, u32 height, u32 format) {
+  std::lock_guard lock{s_spareMutex};
+  for (auto it = s_spareTextures.begin(); it != s_spareTextures.end(); ++it) {
+    if (it->kind == kind && it->width == width && it->height == height && it->format == format) {
+      auto handle = std::move(it->handle);
+      s_spareTextures.erase(it);
+      return handle;
+    }
+  }
+  return {};
+}
+
 uint64_t s_frameCount = 0;
 uint64_t s_bindGeneration = 1;
 std::atomic<uint64_t> s_pendingInvalidations = 0;
@@ -449,8 +503,12 @@ gfx::TextureHandle resolve_dynamic_palette_texture(const GXTexObj_& obj, const G
   entry.lastUsedFrame = s_frameCount;
   if (!entry.handle) {
     // Use source size instead of target (logical) size.
-    entry.handle = gfx::new_conv_texture(source.handle->size.width, source.handle->size.height, GX_TF_RGBA8,
-                                         "GX Dynamic Palette Texture");
+    const u32 width = source.handle->size.width;
+    const u32 height = source.handle->size.height;
+    entry.handle = take_spare_texture(SpareKind::PaletteResult, width, height, GX_TF_RGBA8);
+    if (!entry.handle) {
+      entry.handle = create_palette_result_texture(width, height);
+    }
   }
   if (entry.sourceRevision != source.revision || entry.tlutDataVersion != tlut.tlutDataVersion) {
     gfx::queue_palette_conv({
@@ -571,9 +629,10 @@ GXState::CopyTextureRef resolve_copy_texture(const GXState::CopyTextureKey& key)
   if (copy) {
     ++s_stats.copyCacheHits;
   } else {
-    auto handle = gfx::tex_copy_conv::needs_conversion(key.format)
-                      ? gfx::new_conv_texture(key.width, key.height, key.format, "Copy Conv Texture")
-                      : gfx::new_render_texture(key.width, key.height, GX_TF_RGBA8, "Resolved Texture");
+    auto handle = take_spare_texture(SpareKind::Copy, key.width, key.height, key.format);
+    if (!handle) {
+      handle = create_copy_texture(key.width, key.height, key.format);
+    }
     const uint64_t bytes = texture_handle_size(handle);
     copy = &s_copyCache.insert_pinned(key, {.handle = std::move(handle), .key = key}, bytes);
     ++s_stats.copyCacheMisses;
@@ -583,6 +642,53 @@ GXState::CopyTextureRef resolve_copy_texture(const GXState::CopyTextureKey& key)
   update_cache_stats();
   invalidate_bindings();
   return current;
+}
+
+void reserve_copy_textures(GXTexFmt format, u32 divisor, u32 count, bool paletteResults) noexcept {
+  std::lock_guard lock{s_spareMutex};
+  divisor = std::max<u32>(divisor, 1);
+  // A reservation made again (a game that reserves at each level's start) sets its count anew rather than adding.
+  for (auto& reservation : s_copyReservations) {
+    if (reservation.format == format && reservation.divisor == divisor &&
+        reservation.paletteResults == paletteResults) {
+      reservation.count = count;
+      return;
+    }
+  }
+  s_copyReservations.push_back({
+      .format = format,
+      .divisor = divisor,
+      .count = count,
+      .paletteResults = paletteResults,
+  });
+}
+
+void refill_reserved_copy_textures() noexcept {
+  std::lock_guard lock{s_spareMutex};
+  const auto [logicalWidth, logicalHeight] = logical_fb_size();
+  if (logicalWidth == 0 || logicalHeight == 0) {
+    return;
+  }
+  for (size_t index = 0; index < s_copyReservations.size(); ++index) {
+    auto& reservation = s_copyReservations[index];
+    // The size a copy with this destination gets (copy_tex).
+    const auto [width, height] =
+        scale_copy_dst(logicalWidth / reservation.divisor, logicalHeight / reservation.divisor);
+    if (width == reservation.width && height == reservation.height) {
+      continue;
+    }
+    std::erase_if(s_spareTextures, [index](const SpareTexture& spare) { return spare.reservation == index; });
+    reservation.width = width;
+    reservation.height = height;
+    for (u32 i = 0; i < reservation.count; ++i) {
+      s_spareTextures.push_back({index, SpareKind::Copy, width, height, static_cast<u32>(reservation.format),
+                                 create_copy_texture(width, height, reservation.format)});
+      if (reservation.paletteResults) {
+        s_spareTextures.push_back({index, SpareKind::PaletteResult, width, height, GX_TF_RGBA8,
+                                   create_palette_result_texture(width, height)});
+      }
+    }
+  }
 }
 
 uint64_t current_frame() noexcept { return s_frameCount; }
@@ -816,6 +922,14 @@ void end_frame() noexcept {
 
 void shutdown() noexcept {
   clear_copy_texture_cache();
+  {
+    std::lock_guard lock{s_spareMutex};
+    s_spareTextures.clear();
+    for (auto& reservation : s_copyReservations) {
+      reservation.width = 0;
+      reservation.height = 0;
+    }
+  }
   s_copyCache.set_budget(gfx::RenderTextureCacheLimits.bytes);
   s_textureObjectCaches.clear();
   s_tlutObjectCaches.clear();

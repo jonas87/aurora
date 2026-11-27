@@ -9,6 +9,7 @@
 #include "../../gfx/readback/readback.hpp"
 #include "../../gx/fifo.hpp"
 #include "../../gx/readback.hpp"
+#include "../../gx/texture.hpp"
 
 static void GXWriteString(const char* label) {
   auto length = strlen(label);
@@ -54,6 +55,10 @@ void AuroraGXSync() {
 void AuroraSetDrawsBlocking(bool blocking) {
   GX_WRITE_AURORA(GX_AURORA_SET_DRAWS_BLOCKING);
   GX_WRITE_U8(blocking);
+}
+
+void AuroraReserveCopyTextures(GXTexFmt format, u32 divisor, u32 count, GXBool paletteResults) {
+  aurora::gx::texture::reserve_copy_textures(format, divisor, count, paletteResults != GX_FALSE);
 }
 
 void GXSetViewportRender(f32 left, f32 top, f32 wd, f32 ht, f32 nearz, f32 farz) {

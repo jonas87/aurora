@@ -279,6 +279,8 @@ bool begin_frame() noexcept {
   if (!gfx::begin_frame()) {
     return false;
   }
+  // The render size is applied and the frame's commands have not begun.
+  gx::texture::refill_reserved_copy_textures();
 
   const auto size = window::get_window_size();
   initialize_ui(size);

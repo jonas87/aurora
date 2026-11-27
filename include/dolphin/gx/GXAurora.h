@@ -203,6 +203,14 @@ void AuroraGXSync(void);
 void AuroraSetDrawsBlocking(bool blocking);
 
 /**
+ * Keeps count textures ready for texture copies (GXCopyTex) in format whose destination size (GXSetTexCopyDst) is the
+ * frame buffer's divided by divisor (2 for a copy of the whole frame through the box filter) and, with paletteResults,
+ * as many for reading such copies through a palette. They are created at a frame's start whenever their size changes,
+ * so that the first such copy takes one instead of creating its texture in its frame.
+ */
+void AuroraReserveCopyTextures(GXTexFmt format, u32 divisor, u32 count, GXBool paletteResults);
+
+/**
  * Sets the actual render viewport in native framebuffer coordinates.
  * Overrides the automatically scaled values set by the logical GXSetViewport.
  */

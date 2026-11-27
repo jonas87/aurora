@@ -37,24 +37,6 @@ u32 get_num_xfb_lines(u32 height, u32 scale) {
   return actualHeight;
 }
 
-aurora::Vec2<uint32_t> scale_copy_dst(u32 logicalWidth, u32 logicalHeight) {
-  if (g_gxState.viewportPolicy == AURORA_VIEWPORT_NATIVE) {
-    return {logicalWidth, logicalHeight};
-  }
-
-  const auto [logicalFbWidth, logicalFbHeight] = aurora::gx::logical_fb_size();
-  const auto [targetWidth, targetHeight] = aurora::gfx::get_render_target_size();
-  if (logicalFbWidth == 0 || logicalFbHeight == 0 || targetWidth == 0 || targetHeight == 0) {
-    return {logicalWidth, logicalHeight};
-  }
-
-  const float scaleX = static_cast<float>(targetWidth) / static_cast<float>(logicalFbWidth);
-  const float scaleY = static_cast<float>(targetHeight) / static_cast<float>(logicalFbHeight);
-  const auto scaledWidth = std::max<u32>(static_cast<u32>(std::lround(static_cast<float>(logicalWidth) * scaleX)), 1);
-  const auto scaledHeight = std::max<u32>(static_cast<u32>(std::lround(static_cast<float>(logicalHeight) * scaleY)), 1);
-  return {scaledWidth, scaledHeight};
-}
-
 // The size a texture copy writes: its source's, or half of it through the box filter. The copy's destination size gives
 // the length of its rows only.
 u32 written_size(s32 source) {
@@ -95,6 +77,24 @@ std::optional<PartialCopy> find_partial_copy(const void* dest) {
 } // namespace
 
 namespace aurora::gx {
+Vec2<uint32_t> scale_copy_dst(u32 logicalWidth, u32 logicalHeight) {
+  if (g_gxState.viewportPolicy == AURORA_VIEWPORT_NATIVE) {
+    return {logicalWidth, logicalHeight};
+  }
+
+  const auto [logicalFbWidth, logicalFbHeight] = logical_fb_size();
+  const auto [targetWidth, targetHeight] = gfx::get_render_target_size();
+  if (logicalFbWidth == 0 || logicalFbHeight == 0 || targetWidth == 0 || targetHeight == 0) {
+    return {logicalWidth, logicalHeight};
+  }
+
+  const float scaleX = static_cast<float>(targetWidth) / static_cast<float>(logicalFbWidth);
+  const float scaleY = static_cast<float>(targetHeight) / static_cast<float>(logicalFbHeight);
+  const auto scaledWidth = std::max<u32>(static_cast<u32>(std::lround(static_cast<float>(logicalWidth) * scaleX)), 1);
+  const auto scaledHeight = std::max<u32>(static_cast<u32>(std::lround(static_cast<float>(logicalHeight) * scaleY)), 1);
+  return {scaledWidth, scaledHeight};
+}
+
 void copy_tex(const void* dest, GXBool clear) noexcept {
   const auto rect = map_logical_scissor(g_gxState.texCopySrc);
   const auto texCopyFmt = g_gxState.texCopyFmt;

@@ -72,6 +72,10 @@ void set_source_replacement(aurora::texture::TextureSourceKey key, gfx::TextureH
   s_sourceReplacementId = 2;
 }
 } // namespace testing
+
+// The EFB at its logical size and a render scale of 1.
+Vec2<uint32_t> logical_fb_size() noexcept { return {640, 480}; }
+Vec2<uint32_t> scale_copy_dst(u32 logicalWidth, u32 logicalHeight) { return {logicalWidth, logicalHeight}; }
 } // namespace aurora::gx
 
 namespace aurora::gfx {
