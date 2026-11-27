@@ -131,6 +131,19 @@ typedef struct {
   };
 } AuroraSurfaceDesc;
 
+/*
+ * The sizes in bytes of the buffers a frame's draws are written to: vertices, indices, uniform blocks, storage (vertex
+ * arrays and other per-draw data) and texture uploads. A size left at 0 takes its default. A frame that outgrows one
+ * of them aborts; each is held once on the GPU and once in each of the frames being written ahead.
+ */
+typedef struct {
+  uint32_t vertex;
+  uint32_t index;
+  uint32_t uniform;
+  uint32_t storage;
+  uint32_t textureUpload;
+} AuroraBufferSizes;
+
 typedef void (*AuroraLogCallback)(AuroraLogLevel level, const char* module, const char* message, unsigned int len);
 typedef void (*AuroraImGuiInitCallback)(const AuroraWindowSize* size);
 
@@ -187,6 +200,11 @@ typedef struct {
   uint32_t mem2Size;
 
   AuroraSurfaceDesc surface;
+
+  /*
+   * The sizes in bytes of the buffers a frame's draws are written to (see AuroraBufferSizes).
+   */
+  AuroraBufferSizes bufferSizes;
 } AuroraConfig;
 
 typedef struct {

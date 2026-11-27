@@ -249,11 +249,14 @@ public:
   constexpr ByteBuffer() noexcept = default;
   explicit ByteBuffer(size_t size) noexcept
   : m_data(static_cast<uint8_t*>(calloc(1, size))), m_length(size), m_capacity(size) {}
-  explicit ByteBuffer(uint8_t* data, size_t size) noexcept : m_data(data), m_capacity(size), m_owned(false) {}
+  // A buffer over memory it does not own and cannot grow, such as a frame's mapped staging buffer; label names it if
+  // it overflows.
+  explicit ByteBuffer(uint8_t* data, size_t size, const char* label = nullptr) noexcept
+  : m_data(data), m_capacity(size), m_owned(false), m_label(label) {}
   ~ByteBuffer() noexcept { release(); }
 
   ByteBuffer(ByteBuffer&& rhs) noexcept
-  : m_data(rhs.m_data), m_length(rhs.m_length), m_capacity(rhs.m_capacity), m_owned(rhs.m_owned) {
+  : m_data(rhs.m_data), m_length(rhs.m_length), m_capacity(rhs.m_capacity), m_owned(rhs.m_owned), m_label(rhs.m_label) {
     rhs.m_data = nullptr;
     rhs.m_length = 0;
     rhs.m_capacity = 0;
@@ -269,6 +272,7 @@ public:
     m_length = rhs.m_length;
     m_capacity = rhs.m_capacity;
     m_owned = rhs.m_owned;
+    m_label = rhs.m_label;
     rhs.m_data = nullptr;
     rhs.m_length = 0;
     rhs.m_capacity = 0;
@@ -325,6 +329,19 @@ private:
   size_t m_length = 0;
   size_t m_capacity = 0;
   bool m_owned = true;
+  const char* m_label = nullptr;
+
+  // Out of line and cold, so that formatting the message adds nothing to the inlined paths that append.
+#if defined(__GNUC__) || defined(__clang__)
+  [[noreturn]] __attribute__((noinline, cold))
+#else
+  [[noreturn]] __declspec(noinline)
+#endif
+  static void outgrown(const char* label, size_t capacity, size_t size) noexcept {
+    constexpr Module log{"aurora::gfx"};
+    log.fatal("The {} buffer outgrew its {} bytes ({} needed): AuroraConfig::bufferSizes sets its size",
+              label != nullptr ? label : "mapped", capacity, size);
+  }
 
   void resize(size_t size, bool zeroed) {
     if (size == 0) {
@@ -334,7 +351,7 @@ private:
       m_owned = true;
     } else if (size > m_capacity) {
       if (!m_owned) {
-        abort();
+        outgrown(m_label, m_capacity, size);
       }
       if (size < m_capacity * 2) {
         size = m_capacity * 2;

@@ -382,12 +382,6 @@ void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo,
   }
 }
 
-constexpr uint64_t VertexStagingOffset = 0;
-constexpr uint64_t UniformStagingOffset = VertexStagingOffset + VertexBufferSize;
-constexpr uint64_t IndexStagingOffset = UniformStagingOffset + UniformBufferSize;
-constexpr uint64_t StorageStagingOffset = IndexStagingOffset + IndexBufferSize;
-constexpr uint64_t TextureUploadStagingOffset = StorageStagingOffset + StorageBufferSize;
-
 constexpr uint32_t align_down_copy_offset(uint32_t value) noexcept { return value & ~3u; }
 
 void copy_staging_buffer_range(wgpu::CommandEncoder& cmd, const FramePacket& frame, uint32_t& copied,
@@ -421,11 +415,12 @@ void copy_staging_to_high_water(wgpu::CommandEncoder& cmd, FramePacket& frame, c
   const webgpu::gpu_prof::Zone zone{cmd, "Staging copies"};
   const auto& highWater = op.highWater;
   auto& res = resources();
-  copy_staging_buffer_range(cmd, frame, frame.copied.verts, highWater.verts, VertexStagingOffset, res.vertexBuffer);
-  copy_staging_buffer_range(cmd, frame, frame.copied.uniforms, highWater.uniforms, UniformStagingOffset,
+  copy_staging_buffer_range(cmd, frame, frame.copied.verts, highWater.verts, 0, res.vertexBuffer);
+  copy_staging_buffer_range(cmd, frame, frame.copied.uniforms, highWater.uniforms, buffer_sizes().uniform_offset(),
                             res.uniformBuffer);
-  copy_staging_buffer_range(cmd, frame, frame.copied.indices, highWater.indices, IndexStagingOffset, res.indexBuffer);
-  copy_staging_buffer_range(cmd, frame, frame.copied.storage, highWater.storage, StorageStagingOffset,
+  copy_staging_buffer_range(cmd, frame, frame.copied.indices, highWater.indices, buffer_sizes().index_offset(),
+                            res.indexBuffer);
+  copy_staging_buffer_range(cmd, frame, frame.copied.storage, highWater.storage, buffer_sizes().storage_offset(),
                             res.storageBuffer);
 
   if constexpr (UseTextureBuffer) {
@@ -434,7 +429,8 @@ void copy_staging_to_high_water(wgpu::CommandEncoder& cmd, FramePacket& frame, c
       const wgpu::TexelCopyBufferInfo buf{
           .layout =
               wgpu::TexelCopyBufferLayout{
-                  .offset = item.buffer ? item.layout.offset : item.layout.offset + TextureUploadStagingOffset,
+                  .offset =
+                      item.buffer ? item.layout.offset : item.layout.offset + buffer_sizes().texture_upload_offset(),
                   .bytesPerRow = AURORA_ALIGN(item.layout.bytesPerRow, 256),
                   .rowsPerImage = item.layout.rowsPerImage,
               },

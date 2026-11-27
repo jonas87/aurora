@@ -901,7 +901,7 @@ void queue_texture_upload_data(const uint8_t* data, uint32_t bytesPerRow, uint32
                                wgpu::TexelCopyTextureInfo tex, wgpu::Extent3D size) {
   const auto copyBytesPerRow = AURORA_ALIGN(bytesPerRow, 256);
   auto& frame = current_frame_packet();
-  if (frame.textureUpload.size() + copyBytesPerRow * rowsPerImage <= TextureUploadSize) {
+  if (frame.textureUpload.size() + copyBytesPerRow * rowsPerImage <= buffer_sizes().textureUpload) {
     const auto range = push_texture_data(data, bytesPerRow, rowsPerImage);
     const wgpu::TexelCopyBufferLayout layout{
         .offset = range.offset,
