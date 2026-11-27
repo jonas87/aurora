@@ -203,13 +203,6 @@ void AuroraGXSync(void);
 void AuroraSetDrawsBlocking(bool blocking);
 
 /**
- * Starts converting the texture object's image for the host's GPU on a background thread, from a copy of its data
- * taken now, so that the first draw with it only uploads it. For an image that does not change afterwards (one loaded
- * from disc); palette formats are not prepared.
- */
-void GXPrepareTexObj(const GXTexObj* obj);
-
-/**
  * Sets the actual render viewport in native framebuffer coordinates.
  * Overrides the automatically scaled values set by the logical GXSetViewport.
  */

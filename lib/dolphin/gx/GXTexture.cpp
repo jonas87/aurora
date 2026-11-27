@@ -3,7 +3,6 @@
 
 #include "../../gfx/hash.hpp"
 #include "../../gfx/texture.hpp"
-#include "../../gx/texture.hpp"
 #include "dolphin/gx/GXAurora.h"
 
 #include <algorithm>
@@ -146,10 +145,6 @@ void GXInitTexObjLOD(GXTexObj* obj_, GXTexFilter minFilt, GXTexFilter magFilt, f
   const auto clampedMax = std::clamp(maxLod, 0.0f, 10.0f);
   SET_REG_FIELD(0, obj->mode1, 8, 0, static_cast<u8>(16.0f * clampedMin));
   SET_REG_FIELD(0, obj->mode1, 8, 8, static_cast<u8>(16.0f * clampedMax));
-}
-
-void GXPrepareTexObj(const GXTexObj* obj_) {
-  aurora::gx::texture::prepare_static_texture(*reinterpret_cast<const GXTexObj_*>(obj_));
 }
 
 void GXInitTexObjData(GXTexObj* obj_, const void* data) {

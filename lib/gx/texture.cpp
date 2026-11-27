@@ -7,7 +7,6 @@
 #include "../gfx/tex_reinterpret_conv.hpp"
 #include "../gfx/texture_convert.hpp"
 #include "../gfx/texture_replacement.hpp"
-#include "../thread.hpp"
 #include "shader_info.hpp"
 
 #include <absl/container/flat_hash_map.h>
@@ -17,16 +16,11 @@
 
 #include <algorithm>
 #include <atomic>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <deque>
-#include <mutex>
 #include <optional>
-#include <thread>
 #include <utility>
-#include <vector>
 
 namespace aurora::gx {
 namespace {
@@ -562,151 +556,6 @@ bool use_replacement(std::optional<gfx::texture_replacement::ReplacementResult> 
   }
   return true;
 }
-
-// Conversions started ahead of a static texture's first use (prepare_static_texture), under the content key its first
-// use looks up. A conversion is queued with a copy of its source, converting, ready, or taken; a taken one keeps its
-// key, so that preparing the texture again, whose GPU texture the content cache then holds, does nothing.
-struct PreparedTexture {
-  enum class State : uint8_t { Queued, Converting, Ready, Taken };
-  State state = State::Queued;
-  u32 width = 0;
-  u32 height = 0;
-  u32 format = 0;
-  u32 mipCount = 0;
-  std::vector<uint8_t> source;
-  gfx::ConvertedTexture converted{};
-  uint64_t order = 0;
-};
-
-// The bytes the queued sources and the ready conversions may hold; beyond it the oldest of them go.
-constexpr uint64_t PreparedBudgetBytes = 256ull * 1024ull * 1024ull;
-
-struct TexturePreparer {
-  std::mutex mutex;
-  std::condition_variable_any changed;
-  absl::flat_hash_map<TextureContentKey, PreparedTexture> textures;
-  std::deque<TextureContentKey> queue;
-  uint64_t heldBytes = 0;
-  uint64_t counter = 0;
-  // Last, so that they stop before the rest goes.
-  std::vector<thread::Thread> workers;
-};
-
-TexturePreparer& texture_preparer() {
-  static TexturePreparer preparer;
-  return preparer;
-}
-
-uint64_t held_bytes(const PreparedTexture& texture) noexcept {
-  return texture.source.size() + texture.converted.data.size();
-}
-
-// Drops the oldest queued or ready conversions beyond the budget. Called with the mutex held.
-void drop_over_budget(TexturePreparer& preparer) noexcept {
-  while (preparer.heldBytes > PreparedBudgetBytes) {
-    auto oldest = preparer.textures.end();
-    for (auto it = preparer.textures.begin(); it != preparer.textures.end(); ++it) {
-      const auto state = it->second.state;
-      if ((state == PreparedTexture::State::Queued || state == PreparedTexture::State::Ready) &&
-          (oldest == preparer.textures.end() || it->second.order < oldest->second.order)) {
-        oldest = it;
-      }
-    }
-    if (oldest == preparer.textures.end()) {
-      return;
-    }
-    preparer.heldBytes -= held_bytes(oldest->second);
-    preparer.textures.erase(oldest);
-  }
-}
-
-void prepare_worker(std::stop_token token) noexcept {
-  auto& preparer = texture_preparer();
-  while (true) {
-    TextureContentKey key;
-    PreparedTexture work;
-    {
-      std::unique_lock lock{preparer.mutex};
-      if (!preparer.changed.wait(lock, token, [&] { return !preparer.queue.empty(); })) {
-        return;
-      }
-      key = preparer.queue.front();
-      preparer.queue.pop_front();
-      const auto it = preparer.textures.find(key);
-      if (it == preparer.textures.end() || it->second.state != PreparedTexture::State::Queued) {
-        continue;
-      }
-      auto& texture = it->second;
-      texture.state = PreparedTexture::State::Converting;
-      preparer.heldBytes -= texture.source.size();
-      work.width = texture.width;
-      work.height = texture.height;
-      work.format = texture.format;
-      work.mipCount = texture.mipCount;
-      work.source = std::move(texture.source);
-      texture.source = {};
-    }
-
-    auto converted = gfx::convert_texture(work.format, work.width, work.height, work.mipCount,
-                                          {work.source.data(), work.source.size()});
-    {
-      std::lock_guard lock{preparer.mutex};
-      const auto it = preparer.textures.find(key);
-      if (it != preparer.textures.end()) {
-        auto& texture = it->second;
-        if (converted.data.empty()) {
-          // Uploaded as it is: nothing to keep.
-          texture.state = PreparedTexture::State::Taken;
-        } else {
-          texture.converted = std::move(converted);
-          texture.state = PreparedTexture::State::Ready;
-          preparer.heldBytes += texture.converted.data.size();
-          drop_over_budget(preparer);
-        }
-      }
-    }
-    preparer.changed.notify_all();
-  }
-}
-
-// Starts the workers once. Called with the mutex held.
-void start_prepare_workers(TexturePreparer& preparer) {
-  if (!preparer.workers.empty()) {
-    return;
-  }
-  const uint32_t count = std::clamp(std::thread::hardware_concurrency() / 4, 1u, 4u);
-  for (uint32_t i = 0; i < count; ++i) {
-    preparer.workers.emplace_back(thread::Options{.name = "Aurora texture preparer"}, prepare_worker);
-  }
-}
-
-// The conversion prepared for key, when one is ready or converting (then waited for); a queued one is taken back, for
-// the caller to convert now.
-std::optional<gfx::ConvertedTexture> take_prepared_texture(const TextureContentKey& key) {
-  auto& preparer = texture_preparer();
-  std::unique_lock lock{preparer.mutex};
-  auto it = preparer.textures.find(key);
-  if (it != preparer.textures.end() && it->second.state == PreparedTexture::State::Converting) {
-    preparer.changed.wait(lock, [&] {
-      const auto found = preparer.textures.find(key);
-      return found == preparer.textures.end() || found->second.state != PreparedTexture::State::Converting;
-    });
-    it = preparer.textures.find(key);
-  }
-  if (it == preparer.textures.end() || it->second.state == PreparedTexture::State::Taken) {
-    return std::nullopt;
-  }
-  auto& texture = it->second;
-  preparer.heldBytes -= held_bytes(texture);
-  std::optional<gfx::ConvertedTexture> converted;
-  if (texture.state == PreparedTexture::State::Ready) {
-    converted = std::move(texture.converted);
-  }
-  texture.source = {};
-  texture.converted = {};
-  texture.state = PreparedTexture::State::Taken;
-  return converted;
-}
 } // namespace
 
 const TextureStats& texture_stats() noexcept { return s_stats; }
@@ -826,45 +675,6 @@ void invalidate_replacement(uint64_t replacementId) noexcept {
   }
 }
 
-void prepare_static_texture(const GXTexObj_& obj) noexcept {
-  ZoneScoped;
-
-  if (!obj.has_data() || is_palette_format(obj.format())) {
-    return;
-  }
-  const size_t sourceBytes = texture_source_size(obj.format(), obj.width(), obj.height(), obj.mip_count());
-  if (sourceBytes == 0) {
-    return;
-  }
-  const TextureContentKey key{
-      .textureHash = XXH3_128bits(obj.data, sourceBytes),
-      .width = obj.width(),
-      .height = obj.height(),
-      .format = obj.format(),
-      .mipCount = obj.mip_count(),
-  };
-  auto& preparer = texture_preparer();
-  {
-    std::lock_guard lock{preparer.mutex};
-    if (preparer.textures.contains(key)) {
-      return;
-    }
-    start_prepare_workers(preparer);
-    auto& texture = preparer.textures[key];
-    texture.width = key.width;
-    texture.height = key.height;
-    texture.format = key.format;
-    texture.mipCount = key.mipCount;
-    const auto* source = static_cast<const uint8_t*>(obj.data);
-    texture.source.assign(source, source + sourceBytes);
-    texture.order = ++preparer.counter;
-    preparer.heldBytes += sourceBytes;
-    preparer.queue.push_back(key);
-    drop_over_budget(preparer);
-  }
-  preparer.changed.notify_all();
-}
-
 gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
   ZoneScoped;
 
@@ -901,14 +711,9 @@ gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
 #else
       const auto nameStr = "GX Static Texture";
 #endif
-      if (const auto prepared = take_prepared_texture(keys->contentKey)) {
-        handle = gfx::new_converted_texture_2d(obj.width(), obj.height(), obj.mip_count(), obj.format(), *prepared,
-                                               nameStr);
-      } else {
-        const size_t sourceBytes = texture_source_size(obj.format(), obj.width(), obj.height(), obj.mip_count());
-        handle = gfx::new_static_texture_2d(obj.width(), obj.height(), obj.mip_count(), obj.format(),
-                                            {static_cast<const uint8_t*>(obj.data), sourceBytes}, false, nameStr);
-      }
+      const size_t sourceBytes = texture_source_size(obj.format(), obj.width(), obj.height(), obj.mip_count());
+      handle = gfx::new_static_texture_2d(obj.width(), obj.height(), obj.mip_count(), obj.format(),
+                                          {static_cast<const uint8_t*>(obj.data), sourceBytes}, false, nameStr);
       ++s_stats.misses;
       s_stats.uploadBytes += texture_handle_size(handle);
       cache_content_texture(std::move(keys->contentKey), handle);

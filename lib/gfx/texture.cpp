@@ -97,9 +97,28 @@ u16 wgpu_aniso(GXAnisotropy aniso) {
 }
 } // namespace
 
-namespace {
-// Uploads each of the texture's mip levels from data, in the texture's format.
-void upload_static_texture(TextureRef& ref, uint32_t mips, ArrayRef<uint8_t> data, const char* label) noexcept {
+TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 format, ArrayRef<uint8_t> data,
+                                    bool tlut, const char* label) noexcept {
+  ZoneScoped;
+
+  auto handle = new_dynamic_texture_2d(width, height, mips, format, label);
+  auto& ref = *handle;
+
+  ConvertedTexture converted;
+  if (ref.gxFormat != InvalidTextureFormat) {
+    if (tlut) {
+      CHECK(ref.size.height == 1, "new_static_texture_2d[{}]: expected tlut height 1, got {}", label, ref.size.height);
+      CHECK(ref.mipCount == 1, "new_static_texture_2d[{}]: expected tlut mipCount 1, got {}", label, ref.mipCount);
+      converted = convert_tlut(ref.gxFormat, ref.size.width, data);
+    } else {
+      converted = convert_texture(ref.gxFormat, ref.size.width, ref.size.height, ref.mipCount, data);
+    }
+    if (!converted.data.empty()) {
+      data = converted.data;
+      ref.hasArbitraryMips = converted.hasArbitraryMips;
+    }
+  }
+
   uint32_t offset = 0;
   for (uint32_t mip = 0; mip < mips; ++mip) {
     const wgpu::Extent3D mipSize{
@@ -133,41 +152,6 @@ void upload_static_texture(TextureRef& ref, uint32_t mips, ArrayRef<uint8_t> dat
   if (data.size() != UINT32_MAX && offset < data.size()) {
     Log.warn("new_static_texture_2d[{}]: texture used {} bytes, but given {} bytes", label, offset, data.size());
   }
-}
-} // namespace
-
-TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 format, ArrayRef<uint8_t> data,
-                                    bool tlut, const char* label) noexcept {
-  ZoneScoped;
-
-  auto handle = new_dynamic_texture_2d(width, height, mips, format, label);
-  auto& ref = *handle;
-
-  ConvertedTexture converted;
-  if (ref.gxFormat != InvalidTextureFormat) {
-    if (tlut) {
-      CHECK(ref.size.height == 1, "new_static_texture_2d[{}]: expected tlut height 1, got {}", label, ref.size.height);
-      CHECK(ref.mipCount == 1, "new_static_texture_2d[{}]: expected tlut mipCount 1, got {}", label, ref.mipCount);
-      converted = convert_tlut(ref.gxFormat, ref.size.width, data);
-    } else {
-      converted = convert_texture(ref.gxFormat, ref.size.width, ref.size.height, ref.mipCount, data);
-    }
-    if (!converted.data.empty()) {
-      data = converted.data;
-      ref.hasArbitraryMips = converted.hasArbitraryMips;
-    }
-  }
-  upload_static_texture(ref, mips, data, label);
-  return handle;
-}
-
-TextureHandle new_converted_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 format,
-                                       const ConvertedTexture& converted, const char* label) noexcept {
-  ZoneScoped;
-
-  auto handle = new_dynamic_texture_2d(width, height, mips, format, label);
-  handle->hasArbitraryMips = converted.hasArbitraryMips;
-  upload_static_texture(*handle, mips, converted.data, label);
   return handle;
 }
 
