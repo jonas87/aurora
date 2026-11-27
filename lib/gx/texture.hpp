@@ -50,6 +50,13 @@ uint64_t current_frame() noexcept;
 // The copy made to address dest got new contents in part.
 void touch_copy_texture(const void* dest) noexcept;
 
+// Keeps count textures ready for texture copies in format whose destination size is the logical frame buffer's divided
+// by divisor and, with paletteResults, as many for reading such copies through a palette (AuroraReserveCopyTextures).
+void reserve_copy_textures(GXTexFmt format, u32 divisor, u32 count, bool paletteResults) noexcept;
+// Creates the reserved textures for their current size when it changed. Called at the frame's start, after the render
+// size is applied and before the frame's commands.
+void refill_reserved_copy_textures() noexcept;
+
 // Internal resolvers exposed for cache tests.
 gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj);
 gfx::TextureHandle resolve_static_palette_texture(const GXTexObj_& obj, const GXTlutObj_& tlut);
