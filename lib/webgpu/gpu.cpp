@@ -333,6 +333,15 @@ Viewport calculate_present_viewport(uint32_t surface_width, uint32_t surface_hei
     area_height = std::max<uint32_t>(1u, static_cast<uint32_t>(std::lround(surface_width / area_aspect)));
   }
   auto viewport = calculate_present_viewport(area_width, area_height, content_width, content_height);
+  // A frame within a pixel of the area's shape fills it: fitted exactly, a frame a fraction of a
+  // pixel narrower (853 by 480 in a 16:9 area) left one column of the area uncovered.
+  if (static_cast<float>(area_width) - viewport.width <= 1.f &&
+      static_cast<float>(area_height) - viewport.height <= 1.f) {
+    viewport.left = 0.f;
+    viewport.top = 0.f;
+    viewport.width = static_cast<float>(area_width);
+    viewport.height = static_cast<float>(area_height);
+  }
   viewport.left += static_cast<float>((surface_width - area_width) / 2);
   viewport.top += static_cast<float>((surface_height - area_height) / 2);
   return viewport;
