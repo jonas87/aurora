@@ -116,6 +116,12 @@ struct GXTexObj_ {
   // Custom flag for texture caching
   bool no_cache() const noexcept { return (flags & 0x80) != 0; }
   void set_no_cache(bool value) noexcept { flags = value ? flags | 0x80 : flags & ~0x80; }
+  // A streamed texture object (GXInitTexObjStreaming): its image is rewritten in place, so it keeps a texture of its
+  // own that is updated when the image changes.
+  bool streaming() const noexcept { return (flags & 0x40) != 0; }
+  void set_streaming(bool value) noexcept { flags = value ? flags | 0x40 : flags & ~0x40; }
+  // The flags a texture object's load carries in the command stream: 1 for mip levels, 2 for a streamed object.
+  u8 load_flags() const noexcept { return static_cast<u8>((has_mips() ? 1u : 0u) | (streaming() ? 2u : 0u)); }
 
   // Hacky workaround for an instances where incremental IDs are used for GXCopyTex, but the copy tex was invalidated
   // and the texture reference is still present.

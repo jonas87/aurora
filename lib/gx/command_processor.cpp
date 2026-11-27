@@ -858,10 +858,16 @@ void handle_aurora(ByteReader& reader) noexcept {
     const auto newFormat = static_cast<GXTexFmt>(reader.read<u32>());
     const auto newTlut = static_cast<GXTlut>(reader.read<u32>());
     u8 newFlags = slot.flags & ~0x80u; // Reset no-cache flag
-    if (reader.read<u8>() != 0) {
+    const u8 loadFlags = reader.read<u8>();
+    if ((loadFlags & 1u) != 0) {
       newFlags |= 1u;
     } else {
       newFlags &= ~1u;
+    }
+    if ((loadFlags & 2u) != 0) {
+      newFlags |= 0x40u;
+    } else {
+      newFlags &= ~0x40u;
     }
     const u32 newTexObjId = reader.read<u32>();
     const u32 newTexDataVersion = reader.read<u32>();

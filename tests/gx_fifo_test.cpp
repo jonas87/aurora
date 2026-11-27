@@ -1611,6 +1611,30 @@ TEST_F(GXFifoTest, LoadTexObj_EncodesSdkBpBurstAndAuroraMetadata) {
   EXPECT_EQ(slot.texDataVersion, 1u);
 }
 
+TEST_F(GXFifoTest, LoadTexObj_CarriesTheStreamedMark) {
+  alignas(32) u8 image[64]{};
+  GXTexObj obj{};
+  GXInitTexObj(&obj, image, 8, 8, GX_TF_I8, GX_CLAMP, GX_CLAMP, GX_FALSE);
+  GXInitTexObjStreaming(&obj, GX_TRUE);
+  GXInitTexObjData(&obj, image);
+
+  GXLoadTexObj(&obj, GX_TEXMAP1);
+  GXLoadTexObj(&obj, GX_TEXMAP2);
+  GXInitTexObj(&obj, image, 8, 8, GX_TF_I8, GX_CLAMP, GX_CLAMP, GX_FALSE);
+  GXLoadTexObj(&obj, GX_TEXMAP2);
+  auto bytes = capture_fifo();
+
+  reset_gx_state();
+  decode_fifo(bytes);
+
+  const auto& streamed = gxState().loadedTextures[GX_TEXMAP1];
+  EXPECT_TRUE(streamed.streaming());
+  EXPECT_FALSE(streamed.has_mips());
+  EXPECT_EQ(streamed.texDataVersion, 2u);
+  // GXInitTexObj clears the mark, and the next load of the slot carries that.
+  EXPECT_FALSE(gxState().loadedTextures[GX_TEXMAP2].streaming());
+}
+
 TEST_F(GXFifoTest, TextureMinFiltersRoundTrip) {
   alignas(32) u8 image[64]{};
   const GXTexFilter filters[] = {GX_NEAR, GX_LINEAR, GX_NEAR_MIP_NEAR,

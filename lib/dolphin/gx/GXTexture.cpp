@@ -87,7 +87,7 @@ void emit_loaded_texobj_metadata(const GXTexObj_& obj, GXTexMapID id) {
   GX_WRITE_U32(obj.height());
   GX_WRITE_U32(obj.format());
   GX_WRITE_U32(static_cast<u32>(obj.tlut));
-  GX_WRITE_U8(static_cast<u8>(obj.has_mips()));
+  GX_WRITE_U8(obj.load_flags());
   GX_WRITE_U32(obj.texObjId);
   GX_WRITE_U32(obj.texDataVersion);
 }
@@ -151,6 +151,11 @@ void GXInitTexObjData(GXTexObj* obj_, const void* data) {
   auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
   obj->data = data;
   ++obj->texDataVersion;
+}
+
+void GXInitTexObjStreaming(GXTexObj* obj_, GXBool streaming) {
+  auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
+  obj->set_streaming(streaming != GX_FALSE);
 }
 
 void GXInitTexObjWrapMode(GXTexObj* obj_, GXTexWrapMode wrapS, GXTexWrapMode wrapT) {

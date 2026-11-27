@@ -64,6 +64,8 @@ struct CachedTextureEntry {
   u32 tlutDataVersion = 0;
   uint64_t replacementId = 0;
   uint64_t lastUsedFrame = 0;
+  // A streamed object's last image (its bytes' hash), which its own texture holds.
+  uint64_t streamedHash = 0;
 };
 
 struct CachedTlutTextureEntry {
@@ -772,9 +774,53 @@ void invalidate_replacement(uint64_t replacementId) noexcept {
   }
 }
 
+// A streamed object's texture (GXInitTexObjStreaming): its own, created with its first image and rewritten in place
+// when a new image version brings different bytes. An image rewritten for every frame then neither creates a texture
+// each time (which can stall the driver for milliseconds) nor fills the content cache.
+static gfx::TextureHandle resolve_streamed_texture(const GXTexObj_& obj) {
+  ZoneScoped;
+
+  auto& entry = s_textureObjectCaches[obj.texObjId];
+  entry.lastUsedFrame = s_frameCount;
+  if (entry.handle && entry.texDataVersion == obj.texDataVersion) {
+    ++s_stats.objectHits;
+    return entry.handle;
+  }
+  if (entry.tlutObjId != 0 || entry.replacementId != 0) {
+    clear_texture_dependency(obj.texObjId, entry);
+    entry.handle = {};
+    entry.tlutObjId = 0;
+    entry.tlutDataVersion = 0;
+    entry.replacementId = 0;
+  }
+
+  const size_t sourceBytes = texture_source_size(obj.format(), obj.width(), obj.height(), obj.mip_count());
+  const ArrayRef<uint8_t> source{static_cast<const uint8_t*>(obj.data), sourceBytes};
+  const uint64_t hash = XXH3_64bits(obj.data, sourceBytes);
+  s_stats.hashedBytes += sourceBytes;
+
+  const auto& current = entry.handle;
+  if (!current || current->size.width != obj.width() || current->size.height != obj.height() ||
+      current->gxFormat != obj.format() || current->mipCount != obj.mip_count()) {
+    entry.handle = gfx::new_static_texture_2d(obj.width(), obj.height(), obj.mip_count(), obj.format(), source, false,
+                                              "GX Streamed Texture");
+    ++s_stats.misses;
+    s_stats.uploadBytes += texture_handle_size(entry.handle);
+  } else if (hash != entry.streamedHash) {
+    gfx::write_texture(*entry.handle, source);
+    s_stats.uploadBytes += texture_handle_size(entry.handle);
+  }
+  entry.streamedHash = hash;
+  entry.texDataVersion = obj.texDataVersion;
+  return entry.handle;
+}
+
 gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
   ZoneScoped;
 
+  if (obj.streaming() && obj.texObjId != 0 && !obj.no_cache()) {
+    return resolve_streamed_texture(obj);
+  }
   if (obj.texObjId != 0) {
     if (const auto it = s_textureObjectCaches.find(obj.texObjId); it != s_textureObjectCaches.end()) {
       auto& entry = it->second;
