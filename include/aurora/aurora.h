@@ -15,6 +15,9 @@ extern "C" {
 typedef enum {
   SAMPLER_BILINEAR,
   SAMPLER_AREA,
+  SAMPLER_NEAREST,
+  SAMPLER_SHARP_BILINEAR,
+  SAMPLER_BICUBIC,
 } AuroraSampler;
 
 typedef enum {

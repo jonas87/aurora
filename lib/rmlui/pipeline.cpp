@@ -1040,6 +1040,8 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
   }
 }
 
+// The composition samples the frame bilinearly or by area; the presented frame's other filters (nearest, sharp
+// bilinear, bicubic) fall back to bilinear here.
 uint32_t sampler_mode() noexcept {
   switch (webgpu::get_resampler()) {
   case SAMPLER_AREA:
