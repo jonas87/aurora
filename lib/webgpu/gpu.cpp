@@ -169,11 +169,73 @@ fn sample_area(frag_position: vec4<f32>) -> vec4<f32> {
 
 // END AREA SAMPLER REGION
 
+// BEGIN UPSCALING FILTERS REGION
+
+// Nearest: the source pixel under the target pixel's centre.
+fn sample_nearest(uv: vec2<f32>) -> vec4<f32> {
+    let source_size = vec2<f32>(textureDimensions(t));
+    return sample_by_pixel(vec2<i32>(floor(uv * source_size)));
+}
+
+// Sharp bilinear: the coordinate at which a bilinear sample gives the source as if first enlarged by
+// the largest whole factor that fits (each pixel a block of that many target pixels) and then scaled
+// bilinearly the rest of the way. Within a source pixel the sample stays at its centre; only a band
+// one target pixel wide at its edges blends with the neighbour.
+fn sharp_bilinear_uv(uv: vec2<f32>) -> vec2<f32> {
+    let source_size = vec2<f32>(textureDimensions(t));
+    let target_size = max(vec2<f32>(uniforms.frame_width, uniforms.frame_height), vec2<f32>(1.0, 1.0));
+    let factor = max(floor(target_size / source_size), vec2<f32>(1.0, 1.0));
+    let position = uv * source_size;
+    let offset = fract(position) - vec2<f32>(0.5, 0.5);
+    let flat_half = vec2<f32>(0.5, 0.5) - vec2<f32>(0.5, 0.5) / factor;
+    let blended = (offset - clamp(offset, -flat_half, flat_half)) * factor + vec2<f32>(0.5, 0.5);
+    return (floor(position) + blended) / source_size;
+}
+
+// Catmull-Rom weights of the four source pixels around a position at fraction f past the second.
+fn catmull_rom_weights(f: f32) -> vec4<f32> {
+    let f2 = f * f;
+    let f3 = f2 * f;
+    return vec4<f32>(-0.5 * f3 + f2 - 0.5 * f,
+                     1.5 * f3 - 2.5 * f2 + 1.0,
+                     -1.5 * f3 + 2.0 * f2 + 0.5 * f,
+                     0.5 * f3 - 0.5 * f2);
+}
+
+// Bicubic (Catmull-Rom) over the 4x4 source pixels around the position.
+fn sample_bicubic(uv: vec2<f32>) -> vec4<f32> {
+    let source_size = vec2<f32>(textureDimensions(t));
+    let position = uv * source_size - vec2<f32>(0.5, 0.5);
+    let base = floor(position);
+    let weights_x = catmull_rom_weights(position.x - base.x);
+    let weights_y = catmull_rom_weights(position.y - base.y);
+    let origin = vec2<i32>(base) - vec2<i32>(1, 1);
+    var color = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    for (var row: i32 = 0; row < 4; row = row + 1) {
+        var row_color = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        for (var column: i32 = 0; column < 4; column = column + 1) {
+            row_color += weights_x[column] * sample_by_pixel(origin + vec2<i32>(column, row));
+        }
+        color += weights_y[row] * row_color;
+    }
+    return clamp(color, vec4<f32>(0.0, 0.0, 0.0, 0.0), vec4<f32>(1.0, 1.0, 1.0, 1.0));
+}
+
+// END UPSCALING FILTERS REGION
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    var color = textureSample(t, s, in.uv);
+    var uv = in.uv;
+    if (uniforms.sampler_mode == 3u) {
+        uv = sharp_bilinear_uv(in.uv);
+    }
+    var color = textureSample(t, s, uv);
     if (uniforms.sampler_mode == 1u) {
         color = sample_area(in.position);
+    } else if (uniforms.sampler_mode == 2u) {
+        color = sample_nearest(in.uv);
+    } else if (uniforms.sampler_mode == 4u) {
+        color = sample_bicubic(in.uv);
     }
     return vec4(color.rgb, 1.0);
 }
@@ -183,6 +245,12 @@ uint32_t sampler_mode(AuroraSampler sampler) noexcept {
   switch (sampler) {
   case SAMPLER_AREA:
     return 1;
+  case SAMPLER_NEAREST:
+    return 2;
+  case SAMPLER_SHARP_BILINEAR:
+    return 3;
+  case SAMPLER_BICUBIC:
+    return 4;
   case SAMPLER_BILINEAR:
   default:
     return 0;
@@ -281,6 +349,9 @@ void set_resampler(AuroraSampler sampler) noexcept {
   switch (sampler) {
   case SAMPLER_AREA:
   case SAMPLER_BILINEAR:
+  case SAMPLER_NEAREST:
+  case SAMPLER_SHARP_BILINEAR:
+  case SAMPLER_BICUBIC:
     g_Resampler = sampler;
     return;
   default:
