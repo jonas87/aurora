@@ -83,6 +83,9 @@ GXState::CopyTextureRef resolve_copy_texture(const GXState::CopyTextureKey& key)
   ++ref.revision;
   return ref;
 }
+uint64_t current_frame() noexcept { return 0; }
+void touch_copy_texture(const void* dest) noexcept {}
+void reserve_copy_textures(GXTexFmt format, u32 divisor, u32 count, bool paletteResults) noexcept {}
 } // namespace texture
 void evict_texture_object(u32 texObjId) noexcept {
   for (auto& obj : g_gxState.loadedTextures) {
@@ -156,6 +159,9 @@ Range push_uniform(const uint8_t* data, size_t length) { return push_test_data(t
 Range push_storage(const uint8_t* data, size_t length) { return push_test_data(testing::storageData, data, length); }
 
 Vec2<uint32_t> get_render_target_size() noexcept { return {640, 480}; }
+void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
+                       Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat,
+                       GXPixelFmt sourceFormat, uint32_t boxFilterTaps, ClipRect dstRect) {}
 void set_viewport(const Viewport& viewport) noexcept {}
 void set_scissor(uint32_t x, uint32_t y, uint32_t w, uint32_t h) noexcept {}
 bool g_testNormalAttachment = false;
