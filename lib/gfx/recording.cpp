@@ -586,6 +586,9 @@ struct XfbImage {
   uint32_t lines = 0;
   uint64_t startFrame = 0;
   uint64_t startOrder = 0;
+  // Render target pixels per frame buffer pixel, from the copy that started the frame buffer. The
+  // copies that continue it land at this scale, whatever their own source sizes round to.
+  Vec2<float> scale{1.f, 1.f};
   webgpu::TextureWithSampler texture;
 };
 constexpr size_t MaxXfbImages = 8;
@@ -597,12 +600,14 @@ uintptr_t xfb_end(const XfbImage& image) noexcept { return image.base + uintptr_
 // The image a display copy writes into. A copy into the lines of a frame buffer that an earlier
 // copy of this frame started (a frame drawn in parts) continues it. Any other copy starts the
 // frame buffer at its own address, sized for the lines the video interface shows (a copy's lines
-// past them are clipped, as the display shows none of them; without a video mode, for the copy's),
-// and drops the frame buffers whose first line it overwrites.
-XfbImage& acquire_xfb(const XfbCopy& copy, uint64_t frameId) {
+// past them are clipped, as the display shows none of them; without a video mode, for the copy's)
+// and at the copy's scale, and drops the frame buffers whose first line it overwrites. started
+// tells which of the two the copy did.
+XfbImage& acquire_xfb(const XfbCopy& copy, uint64_t frameId, bool& started) {
   for (auto& image : g_xfbImages) {
     if (image.startFrame == frameId && image.stride == copy.stride && copy.dest >= image.base &&
         copy.dest < xfb_end(image)) {
+      started = false;
       return image;
     }
   }
@@ -621,15 +626,18 @@ XfbImage& acquire_xfb(const XfbCopy& copy, uint64_t frameId) {
   it->lines = copy.fbLines != 0 ? copy.fbLines : copy.lines;
   it->startFrame = frameId;
   it->startOrder = ++g_xfbStartCount;
+  it->scale = copy.scale;
+  started = true;
   return *it;
 }
 
-// Gives the image a texture at the render target's scale and format, created anew (cleared) when
-// either has changed.
-void size_xfb(XfbImage& image, const XfbCopy& copy, wgpu::TextureFormat format) {
+// Gives the image a texture at its scale and the render target's format, created anew (cleared)
+// when either has changed.
+void size_xfb(XfbImage& image, wgpu::TextureFormat format) {
   const auto width =
-      std::max(1u, static_cast<uint32_t>(std::lround(static_cast<float>(copy.stride / 2) * copy.scale.x)));
-  const auto height = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<float>(image.lines) * copy.scale.y)));
+      std::max(1u, static_cast<uint32_t>(std::lround(static_cast<float>(image.stride / 2) * image.scale.x)));
+  const auto height =
+      std::max(1u, static_cast<uint32_t>(std::lround(static_cast<float>(image.lines) * image.scale.y)));
   auto& xfb = image.texture;
   if (xfb.texture && xfb.size.width == width && xfb.size.height == height && xfb.format == format) {
     return;
@@ -1156,8 +1164,14 @@ void copy_disp(ClipRect rect, const XfbCopy& xfb, bool clearColor, bool clearAlp
   const auto right = std::clamp<int32_t>(rect.x + rect.width, left, static_cast<int32_t>(color.size.width));
   const auto bottom = std::clamp<int32_t>(rect.y + rect.height, top, static_cast<int32_t>(color.size.height));
   if (right > left && bottom > top && xfb.stride != 0 && xfb.lines != 0) {
-    auto& image = acquire_xfb(xfb, current_frame_packet().frameId);
-    size_xfb(image, xfb, color.format);
+    // A copy that continues a frame buffer (a frame drawn in parts) keeps its texture: sized anew
+    // for this copy's scale, which its own source size can round differently, it would be cleared
+    // of the parts already copied.
+    bool started = false;
+    auto& image = acquire_xfb(xfb, current_frame_packet().frameId, started);
+    if (started) {
+      size_xfb(image, color.format);
+    }
     const auto imageWidth = static_cast<int32_t>(image.texture.size.width);
     const auto imageHeight = static_cast<int32_t>(image.texture.size.height);
 
@@ -1169,11 +1183,11 @@ void copy_disp(ClipRect rect, const XfbCopy& xfb, bool clearColor, bool clearAlp
     const auto column = static_cast<float>(offset % xfb.stride / 2);
     const auto srcWidth = right - left;
     const auto srcHeight = bottom - top;
-    const auto dstLeft = std::min(static_cast<int32_t>(std::lround(column * xfb.scale.x)), imageWidth);
-    const auto dstTop = std::min(static_cast<int32_t>(std::lround(row * xfb.scale.y)), imageHeight);
+    const auto dstLeft = std::min(static_cast<int32_t>(std::lround(column * image.scale.x)), imageWidth);
+    const auto dstTop = std::min(static_cast<int32_t>(std::lround(row * image.scale.y)), imageHeight);
     int32_t dstHeight = srcHeight;
     if (xfb.scaled) {
-      dstHeight = static_cast<int32_t>(std::lround((row + static_cast<float>(xfb.lines)) * xfb.scale.y)) - dstTop;
+      dstHeight = static_cast<int32_t>(std::lround((row + static_cast<float>(xfb.lines)) * image.scale.y)) - dstTop;
     }
     const auto width = std::min(srcWidth, imageWidth - dstLeft);
     const auto height = std::min(dstHeight, imageHeight - dstTop);
