@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <vector>
 
 #include <tracy/Tracy.hpp>
 
@@ -32,7 +33,11 @@ uint32_t sPendingDraws = 0;
 std::atomic<uint64_t> sPublished{0};
 std::atomic<uint64_t> sProcessed{0};
 uint64_t sStreamBase = 0;
+// Guards the buffer's address, the stream base and the retired buffers. The processor holds it only
+// to take the range it processes next; a buffer that growth replaced stays allocated until the
+// processor's next pass, so the processor reads it unlocked and growth never waits for a pass.
 std::mutex sBufferMutex;
+std::vector<uint8_t*> sRetiredBuffers;
 std::atomic<uint32_t> sWorkerWake{0};
 thread::Thread sWorkerThread;
 std::atomic<DrawDoneCallback> sDrawDoneCallback{nullptr};
@@ -48,19 +53,29 @@ void wake_worker() noexcept {
   sWorkerWake.notify_all();
 }
 
+// Frees the buffers that growth replaced. Called with sBufferMutex held, where no pass reads them.
+void free_retired_buffers() noexcept {
+  for (uint8_t* buffer : sRetiredBuffers) {
+    free(buffer);
+  }
+  sRetiredBuffers.clear();
+}
+
 void process_to(uint64_t target, std::memory_order order) noexcept {
   uint64_t processed = sProcessed.load(std::memory_order_relaxed);
   while (processed < target) {
-    ProcessResult result{};
+    const uint8_t* data = nullptr;
+    uint32_t size = 0;
     {
       std::lock_guard lock{sBufferMutex};
+      free_retired_buffers();
       AURORA_ASSERT(processed >= sStreamBase && target <= sStreamBase + detail::sBufferSize,
                     "FIFO processing range [{}, {}) is outside buffered range [{}, {})", processed, target, sStreamBase,
                     sStreamBase + detail::sBufferSize);
-      const auto start = static_cast<uint32_t>(processed - sStreamBase);
-      const auto size = static_cast<uint32_t>(target - processed);
-      result = process(detail::sBufferData + start, size);
+      data = detail::sBufferData + static_cast<uint32_t>(processed - sStreamBase);
+      size = static_cast<uint32_t>(target - processed);
     }
+    const ProcessResult result = process(data, size);
     AURORA_ASSERT(result.bytesProcessed > 0 && result.bytesProcessed <= target - processed,
                   "FIFO processor made invalid progress: processed {} of {} remaining bytes", result.bytesProcessed,
                   target - processed);
@@ -118,6 +133,7 @@ void init(ProcessingMode mode) {
   sProcessingMode = mode;
 
   constexpr uint32_t initialCapacity = 64 * 1024;
+  free_retired_buffers();
   free(detail::sBufferData);
   detail::sBufferData = static_cast<uint8_t*>(malloc(initialCapacity));
   AURORA_ASSERT(detail::sBufferData != nullptr, "fifo::init: failed to allocate {} bytes", initialCapacity);
@@ -154,16 +170,15 @@ void write_data_grow(const void* data, uint32_t length) {
   const auto doubledCapacity = static_cast<uint64_t>(detail::sBufferCapacity) * 2;
   const auto newCapacity = static_cast<uint32_t>(
       std::min<uint64_t>(std::max(doubledCapacity, needed64), std::numeric_limits<uint32_t>::max()));
-  const auto grow = [newCapacity] {
-    auto* resized = static_cast<uint8_t*>(realloc(detail::sBufferData, newCapacity));
-    AURORA_ASSERT(resized != nullptr, "fifo::write_data: failed to allocate {} bytes", newCapacity);
-    detail::sBufferData = resized;
-  };
-  if (sWorkerThread.joinable()) {
+  // The processor may be reading the current buffer: the commands move to a new one, and the old
+  // one is retired for the processor to free.
+  auto* grown = static_cast<uint8_t*>(malloc(newCapacity));
+  AURORA_ASSERT(grown != nullptr, "fifo::write_data: failed to allocate {} bytes", newCapacity);
+  std::memcpy(grown, detail::sBufferData, detail::sBufferSize);
+  {
     std::lock_guard lock{sBufferMutex};
-    grow();
-  } else {
-    grow();
+    sRetiredBuffers.push_back(detail::sBufferData);
+    detail::sBufferData = grown;
   }
   std::memcpy(detail::sBufferData + detail::sBufferSize, data, length);
   detail::sBufferSize = needed;
@@ -263,6 +278,7 @@ void drain() {
 
   {
     std::lock_guard lock{sBufferMutex};
+    free_retired_buffers();
     sStreamBase = target;
     detail::sBufferSize = 0;
   }
