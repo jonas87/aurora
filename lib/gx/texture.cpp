@@ -7,6 +7,7 @@
 #include "../gfx/tex_reinterpret_conv.hpp"
 #include "../gfx/texture_convert.hpp"
 #include "../gfx/texture_replacement.hpp"
+#include "../thread.hpp"
 #include "shader_info.hpp"
 
 #include <absl/container/flat_hash_map.h>
@@ -16,11 +17,15 @@
 
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <optional>
+#include <stop_token>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -620,6 +625,169 @@ bool use_replacement(std::optional<gfx::texture_replacement::ReplacementResult> 
   }
   return true;
 }
+
+// Textures prepared ahead of their first draw (prepare_static_texture, GXPrepareTexObj). Background threads convert
+// the image, from a copy taken when it was prepared, and create its GPU texture, under the content key its first draw
+// looks up; that draw then only uploads the image. A prepared texture is queued (with its source), being prepared,
+// ready (with its texture and the image to upload) or taken; a taken one keeps its key, so that preparing the same
+// image again, which the content cache then holds, does nothing.
+struct PreparedTexture {
+  enum class State : uint8_t { Queued, Preparing, Ready, Taken };
+  State state = State::Queued;
+  u32 width = 0;
+  u32 height = 0;
+  u32 format = 0;
+  u32 mipCount = 0;
+  // The source while queued; when ready, also the image to upload if its format uploads as it is.
+  std::vector<uint8_t> source;
+  // The converted image to upload, when its format needs converting.
+  gfx::ConvertedTexture converted{};
+  gfx::TextureHandle handle;
+  uint64_t order = 0;
+};
+
+// The bytes the queued sources and the ready images and textures may hold; beyond it the oldest of them go.
+constexpr uint64_t PreparedBudgetBytes = 256ull * 1024ull * 1024ull;
+
+struct TexturePreparer {
+  std::mutex mutex;
+  std::condition_variable_any changed;
+  absl::flat_hash_map<TextureContentKey, PreparedTexture> textures;
+  std::deque<TextureContentKey> queue;
+  uint64_t heldBytes = 0;
+  uint64_t counter = 0;
+  // Advanced by a shutdown, which drops the textures; a preparation begun before it is dropped too.
+  uint64_t generation = 0;
+  // Last, so that they stop before the rest goes.
+  std::vector<thread::Thread> workers;
+};
+
+TexturePreparer& texture_preparer() {
+  static TexturePreparer preparer;
+  return preparer;
+}
+
+uint64_t held_bytes(const PreparedTexture& texture) noexcept {
+  return texture.source.size() + texture.converted.data.size() + texture_handle_size(texture.handle);
+}
+
+// Drops the oldest queued or ready textures beyond the budget. Called with the mutex held.
+void drop_over_budget(TexturePreparer& preparer) noexcept {
+  while (preparer.heldBytes > PreparedBudgetBytes) {
+    auto oldest = preparer.textures.end();
+    for (auto it = preparer.textures.begin(); it != preparer.textures.end(); ++it) {
+      const auto state = it->second.state;
+      if ((state == PreparedTexture::State::Queued || state == PreparedTexture::State::Ready) &&
+          (oldest == preparer.textures.end() || it->second.order < oldest->second.order)) {
+        oldest = it;
+      }
+    }
+    if (oldest == preparer.textures.end()) {
+      return;
+    }
+    preparer.heldBytes -= held_bytes(oldest->second);
+    preparer.textures.erase(oldest);
+  }
+}
+
+void prepare_worker(std::stop_token token) noexcept {
+  auto& preparer = texture_preparer();
+  while (true) {
+    TextureContentKey key;
+    PreparedTexture work;
+    uint64_t generation = 0;
+    {
+      std::unique_lock lock{preparer.mutex};
+      if (!preparer.changed.wait(lock, token, [&] { return !preparer.queue.empty(); })) {
+        return;
+      }
+      key = preparer.queue.front();
+      preparer.queue.pop_front();
+      const auto it = preparer.textures.find(key);
+      if (it == preparer.textures.end() || it->second.state != PreparedTexture::State::Queued) {
+        continue;
+      }
+      auto& texture = it->second;
+      texture.state = PreparedTexture::State::Preparing;
+      preparer.heldBytes -= texture.source.size();
+      work.width = texture.width;
+      work.height = texture.height;
+      work.format = texture.format;
+      work.mipCount = texture.mipCount;
+      work.source = std::move(texture.source);
+      texture.source = {};
+      generation = preparer.generation;
+    }
+
+    work.converted = gfx::convert_texture(work.format, work.width, work.height, work.mipCount,
+                                          {work.source.data(), work.source.size()});
+    if (!work.converted.data.empty()) {
+      work.source = {};
+    }
+    work.handle =
+        gfx::new_dynamic_texture_2d(work.width, work.height, work.mipCount, work.format, "GX Prepared Texture");
+    {
+      std::lock_guard lock{preparer.mutex};
+      const auto it = preparer.textures.find(key);
+      if (generation == preparer.generation && it != preparer.textures.end()) {
+        auto& texture = it->second;
+        texture.source = std::move(work.source);
+        texture.converted = std::move(work.converted);
+        texture.handle = std::move(work.handle);
+        texture.state = PreparedTexture::State::Ready;
+        preparer.heldBytes += held_bytes(texture);
+        drop_over_budget(preparer);
+      }
+    }
+    preparer.changed.notify_all();
+  }
+}
+
+// Starts the workers once. Called with the mutex held.
+void start_prepare_workers(TexturePreparer& preparer) {
+  if (!preparer.workers.empty()) {
+    return;
+  }
+  const uint32_t count = std::clamp(std::thread::hardware_concurrency() / 4, 1u, 4u);
+  for (uint32_t i = 0; i < count; ++i) {
+    preparer.workers.emplace_back(thread::Options{.name = "Aurora texture preparer"}, prepare_worker);
+  }
+}
+
+// A texture prepared for key, ready (or being prepared, then waited for), with the image its first draw uploads.
+struct TakenTexture {
+  gfx::TextureHandle handle;
+  std::vector<uint8_t> source;
+  gfx::ConvertedTexture converted;
+};
+
+// Takes the texture prepared for key; a queued one is taken back, for the caller to create now.
+std::optional<TakenTexture> take_prepared_texture(const TextureContentKey& key) {
+  auto& preparer = texture_preparer();
+  std::unique_lock lock{preparer.mutex};
+  auto it = preparer.textures.find(key);
+  if (it != preparer.textures.end() && it->second.state == PreparedTexture::State::Preparing) {
+    preparer.changed.wait(lock, [&] {
+      const auto found = preparer.textures.find(key);
+      return found == preparer.textures.end() || found->second.state != PreparedTexture::State::Preparing;
+    });
+    it = preparer.textures.find(key);
+  }
+  if (it == preparer.textures.end() || it->second.state == PreparedTexture::State::Taken) {
+    return std::nullopt;
+  }
+  auto& texture = it->second;
+  preparer.heldBytes -= held_bytes(texture);
+  std::optional<TakenTexture> taken;
+  if (texture.state == PreparedTexture::State::Ready) {
+    taken = TakenTexture{std::move(texture.handle), std::move(texture.source), std::move(texture.converted)};
+  }
+  texture.source = {};
+  texture.converted = {};
+  texture.handle = {};
+  texture.state = PreparedTexture::State::Taken;
+  return taken;
+}
 } // namespace
 
 const TextureStats& texture_stats() noexcept { return s_stats; }
@@ -829,6 +997,45 @@ static gfx::TextureHandle resolve_streamed_texture(const GXTexObj_& obj) {
   return entry.handle;
 }
 
+void prepare_static_texture(const GXTexObj_& obj) noexcept {
+  ZoneScoped;
+
+  if (!obj.has_data() || is_palette_format(obj.format())) {
+    return;
+  }
+  const size_t sourceBytes = texture_source_size(obj.format(), obj.width(), obj.height(), obj.mip_count());
+  if (sourceBytes == 0) {
+    return;
+  }
+  const TextureContentKey key{
+      .textureHash = XXH3_128bits(obj.data, sourceBytes),
+      .width = obj.width(),
+      .height = obj.height(),
+      .format = obj.format(),
+      .mipCount = obj.mip_count(),
+  };
+  auto& preparer = texture_preparer();
+  {
+    std::lock_guard lock{preparer.mutex};
+    if (preparer.textures.contains(key)) {
+      return;
+    }
+    start_prepare_workers(preparer);
+    auto& texture = preparer.textures[key];
+    texture.width = key.width;
+    texture.height = key.height;
+    texture.format = key.format;
+    texture.mipCount = key.mipCount;
+    const auto* source = static_cast<const uint8_t*>(obj.data);
+    texture.source.assign(source, source + sourceBytes);
+    texture.order = ++preparer.counter;
+    preparer.heldBytes += sourceBytes;
+    preparer.queue.push_back(key);
+    drop_over_budget(preparer);
+  }
+  preparer.changed.notify_all();
+}
+
 gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
   ZoneScoped;
 
@@ -871,9 +1078,18 @@ gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
 #else
       const auto nameStr = "GX Static Texture";
 #endif
-      const size_t sourceBytes = texture_source_size(obj.format(), obj.width(), obj.height(), obj.mip_count());
-      handle = gfx::new_static_texture_2d(obj.width(), obj.height(), obj.mip_count(), obj.format(),
-                                          {static_cast<const uint8_t*>(obj.data), sourceBytes}, false, nameStr);
+      if (auto prepared = take_prepared_texture(keys->contentKey)) {
+        handle = std::move(prepared->handle);
+        const bool converted = !prepared->converted.data.empty();
+        const ArrayRef<uint8_t> image =
+            converted ? ArrayRef<uint8_t>{prepared->converted.data.data(), prepared->converted.data.size()}
+                      : ArrayRef<uint8_t>{prepared->source.data(), prepared->source.size()};
+        gfx::upload_prepared_texture(*handle, image, converted && prepared->converted.hasArbitraryMips);
+      } else {
+        const size_t sourceBytes = texture_source_size(obj.format(), obj.width(), obj.height(), obj.mip_count());
+        handle = gfx::new_static_texture_2d(obj.width(), obj.height(), obj.mip_count(), obj.format(),
+                                            {static_cast<const uint8_t*>(obj.data), sourceBytes}, false, nameStr);
+      }
       ++s_stats.misses;
       s_stats.uploadBytes += texture_handle_size(handle);
       cache_content_texture(std::move(keys->contentKey), handle);
@@ -975,6 +1191,23 @@ void end_frame() noexcept {
 }
 
 void shutdown() noexcept {
+  {
+    // The workers stop, and are waited for, before the device goes: one in the middle of a preparation finishes it
+    // (creating a texture) and then finds its generation gone. A later preparation starts them again.
+    auto& preparer = texture_preparer();
+    std::vector<thread::Thread> workers;
+    {
+      std::lock_guard lock{preparer.mutex};
+      preparer.queue.clear();
+      preparer.textures.clear();
+      preparer.heldBytes = 0;
+      ++preparer.generation;
+      workers = std::move(preparer.workers);
+      preparer.workers.clear();
+    }
+    preparer.changed.notify_all();
+    workers.clear();
+  }
   clear_copy_texture_cache();
   {
     std::lock_guard lock{s_spareMutex};

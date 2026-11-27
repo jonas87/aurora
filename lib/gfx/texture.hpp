@@ -57,6 +57,9 @@ struct TextureRef {
 
 TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat,
                                     ArrayRef<uint8_t> data, bool tlut, const char* label) noexcept;
+// Uploads the image of a texture created ahead with new_dynamic_texture_2d (GXPrepareTexObj): data is the converted
+// image, or the source when its format uploads as it is.
+void upload_prepared_texture(TextureRef& ref, ArrayRef<uint8_t> data, bool hasArbitraryMips) noexcept;
 TextureHandle new_dynamic_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat,
                                      const char* label) noexcept;
 TextureHandle new_render_texture(uint32_t width, uint32_t height, u32 gxFormat, const char* label) noexcept;

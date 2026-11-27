@@ -57,6 +57,11 @@ void reserve_copy_textures(GXTexFmt format, u32 divisor, u32 count, bool palette
 // size is applied and before the frame's commands.
 void refill_reserved_copy_textures() noexcept;
 
+// Prepares the static texture's image ahead of its first use on background threads, from a copy of its data taken
+// now: they convert it and create its texture, so that its first use only uploads it (GXPrepareTexObj). For an image
+// that does not change afterwards; palette formats are left to their first use.
+void prepare_static_texture(const GXTexObj_& obj) noexcept;
+
 // Internal resolvers exposed for cache tests.
 gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj);
 gfx::TextureHandle resolve_static_palette_texture(const GXTexObj_& obj, const GXTlutObj_& tlut);

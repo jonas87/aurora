@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <utility>
 
 #include <fmt/format.h>
@@ -95,30 +96,9 @@ u16 wgpu_aniso(GXAnisotropy aniso) {
     return std::max<u16>(webgpu::g_graphicsConfig.textureAnisotropy, 1);
   }
 }
-} // namespace
-
-TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 format, ArrayRef<uint8_t> data,
-                                    bool tlut, const char* label) noexcept {
-  ZoneScoped;
-
-  auto handle = new_dynamic_texture_2d(width, height, mips, format, label);
-  auto& ref = *handle;
-
-  ConvertedTexture converted;
-  if (ref.gxFormat != InvalidTextureFormat) {
-    if (tlut) {
-      CHECK(ref.size.height == 1, "new_static_texture_2d[{}]: expected tlut height 1, got {}", label, ref.size.height);
-      CHECK(ref.mipCount == 1, "new_static_texture_2d[{}]: expected tlut mipCount 1, got {}", label, ref.mipCount);
-      converted = convert_tlut(ref.gxFormat, ref.size.width, data);
-    } else {
-      converted = convert_texture(ref.gxFormat, ref.size.width, ref.size.height, ref.mipCount, data);
-    }
-    if (!converted.data.empty()) {
-      data = converted.data;
-      ref.hasArbitraryMips = converted.hasArbitraryMips;
-    }
-  }
-
+// Uploads each of the texture's mip levels from data, already in the texture's format.
+void upload_static_texture(TextureRef& ref, ArrayRef<uint8_t> data, const char* label) noexcept {
+  const uint32_t mips = ref.mipCount;
   uint32_t offset = 0;
   for (uint32_t mip = 0; mip < mips; ++mip) {
     const wgpu::Extent3D mipSize{
@@ -152,12 +132,50 @@ TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mi
   if (data.size() != UINT32_MAX && offset < data.size()) {
     Log.warn("new_static_texture_2d[{}]: texture used {} bytes, but given {} bytes", label, offset, data.size());
   }
+}
+} // namespace
+
+TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 format, ArrayRef<uint8_t> data,
+                                    bool tlut, const char* label) noexcept {
+  ZoneScoped;
+
+  auto handle = new_dynamic_texture_2d(width, height, mips, format, label);
+  auto& ref = *handle;
+
+  ConvertedTexture converted;
+  if (ref.gxFormat != InvalidTextureFormat) {
+    if (tlut) {
+      CHECK(ref.size.height == 1, "new_static_texture_2d[{}]: expected tlut height 1, got {}", label, ref.size.height);
+      CHECK(ref.mipCount == 1, "new_static_texture_2d[{}]: expected tlut mipCount 1, got {}", label, ref.mipCount);
+      converted = convert_tlut(ref.gxFormat, ref.size.width, data);
+    } else {
+      converted = convert_texture(ref.gxFormat, ref.size.width, ref.size.height, ref.mipCount, data);
+    }
+    if (!converted.data.empty()) {
+      data = converted.data;
+      ref.hasArbitraryMips = converted.hasArbitraryMips;
+    }
+  }
+  upload_static_texture(ref, data, label);
   return handle;
+}
+
+void upload_prepared_texture(TextureRef& ref, ArrayRef<uint8_t> data, bool hasArbitraryMips) noexcept {
+  ZoneScoped;
+
+  ref.hasArbitraryMips = hasArbitraryMips;
+  upload_static_texture(ref, data, "GX Prepared Texture");
 }
 
 TextureHandle new_dynamic_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat,
                                      const char* label) noexcept {
   ZoneScopedS(3);
+  // The texture preparers (GXPrepareTexObj) create textures here beside the FIFO thread's first draws, which create
+  // theirs here too: these creations take turns. The device is created without Dawn's implicit synchronisation;
+  // Aurora's other device calls from several threads (copy textures, bind groups, the render worker's encoding) do not
+  // take this lock.
+  static std::mutex createMutex;
+  std::lock_guard createLock{createMutex};
   const auto wgpuFormat = to_wgpu(gxFormat);
   const wgpu::Extent3D size{
       .width = width,

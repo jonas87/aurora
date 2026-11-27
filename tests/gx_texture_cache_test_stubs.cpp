@@ -7,6 +7,7 @@
 #include "gfx/texture_convert.hpp"
 #include "gfx/texture_replacement.hpp"
 #include "internal.hpp"
+#include "thread.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -110,6 +111,21 @@ TextureHandle new_render_texture(uint32_t width, uint32_t height, u32 gxFormat, 
 
 void write_texture(TextureRef& ref, ArrayRef<uint8_t> data) noexcept { ++s_textureWrites; }
 
+TextureHandle new_dynamic_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat,
+                                     const char* label) noexcept {
+  ++s_textureAllocations;
+  auto handle = gx::testing::make_texture_handle(width, height, gxFormat);
+  handle->mipCount = mips;
+  return handle;
+}
+
+void upload_prepared_texture(TextureRef& ref, ArrayRef<uint8_t> data, bool hasArbitraryMips) noexcept {}
+
+// Every format uploads as it is: no converted bytes.
+ConvertedTexture convert_texture(u32 format, uint32_t width, uint32_t height, uint32_t mips, ArrayRef<uint8_t> data) {
+  return {.format = wgpu::TextureFormat::RGBA8Unorm, .width = width, .height = height, .mips = mips};
+}
+
 ConvertedTexture convert_texture_palette(u32 textureFormat, uint32_t width, uint32_t height, uint32_t mips,
                                          ArrayRef<uint8_t> textureData, GXTlutFmt tlutFormat, uint16_t tlutEntries,
                                          ArrayRef<uint8_t> tlutData) {
@@ -164,3 +180,7 @@ std::string build_texture_replacement_name(const aurora::texture::TextureSourceK
   return "test texture";
 }
 } // namespace aurora::gfx::texture_replacement
+
+namespace aurora::thread {
+void set_current(const Options& options) noexcept {}
+} // namespace aurora::thread
