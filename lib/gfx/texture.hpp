@@ -97,7 +97,15 @@ struct GXTexObj_ {
   }
   GXTexFilter mag_filter() const noexcept { return get_bits(mode0, 1, 4) != 0 ? GX_LINEAR : GX_NEAR; }
   GXBool has_mips() const noexcept { return (flags & 1u) != 0 ? GX_TRUE : GX_FALSE; }
-  u32 mip_count() const noexcept { return has_mips() ? std::max<u32>(static_cast<u32>(max_lod()) + 1, 1u) : 1; }
+  // The hardware reads mip levels whenever the minification filter uses them, up to the maximum LOD.
+  // GXInitTexObj's mipmap argument only presets the filter and the LOD range: a texture initialised
+  // without it and given a mipmapped filter by GXInitTexObjLOD has its levels too.
+  bool uses_mips() const noexcept {
+    const GXTexFilter filter = min_filter();
+    return filter == GX_NEAR_MIP_NEAR || filter == GX_NEAR_MIP_LIN || filter == GX_LIN_MIP_NEAR ||
+           filter == GX_LIN_MIP_LIN;
+  }
+  u32 mip_count() const noexcept { return uses_mips() ? std::max<u32>(static_cast<u32>(max_lod()) + 1, 1u) : 1; }
   GXBool do_edge_lod() const noexcept { return get_bits(mode0, 1, 8) == 0 ? GX_TRUE : GX_FALSE; }
   float lod_bias() const noexcept { return static_cast<float>(static_cast<int8_t>(get_bits(mode0, 8, 9))) / 32.0f; }
   GXAnisotropy max_aniso() const noexcept { return static_cast<GXAnisotropy>(get_bits(mode0, 2, 19)); }
