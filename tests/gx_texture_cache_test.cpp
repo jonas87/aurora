@@ -67,6 +67,38 @@ TEST_F(GxTextureCacheTest, CalculatesTiledAndLinearMipSourceSizes) {
   EXPECT_EQ(texture::tlut_source_size(256), 512);
 }
 
+// A mipmapped minification filter (mode0 bits 5-7) reads levels up to the maximum LOD (mode1 bits 8-15, in
+// sixteenths), no more than the image's chain down to 1x1.
+constexpr u32 LinMipLinFilter = 6u << 5;
+constexpr u32 LinearFilter = 4u << 5;
+constexpr u32 max_lod_bits(u32 lod) { return (lod * 16) << 8; }
+
+TEST_F(GxTextureCacheTest, CountsMipLevelsWithinTheImageChain) {
+  auto obj = make_texture(nullptr, 1, GX_TF_I8, 64, 64);
+  obj.mode0 = LinMipLinFilter;
+  obj.mode1 = max_lod_bits(10);
+  EXPECT_EQ(obj.mip_count(), 7u);
+  obj.mode1 = max_lod_bits(3);
+  EXPECT_EQ(obj.mip_count(), 4u);
+  obj.mode0 = LinearFilter;
+  EXPECT_EQ(obj.mip_count(), 1u);
+}
+
+TEST_F(GxTextureCacheTest, ResolvesAgainWhenTheFilterAddsMipLevels) {
+  std::array<uint8_t, 128> data{};
+  auto obj = make_texture(data.data(), 7, GX_TF_RGBA8_PC, 4, 4);
+  obj.mode0 = LinearFilter;
+  const auto single = texture::resolve_static_texture(obj);
+  ASSERT_TRUE(single);
+  EXPECT_EQ(single->mipCount, 1u);
+
+  obj.mode0 = LinMipLinFilter;
+  obj.mode1 = max_lod_bits(10);
+  const auto chain = texture::resolve_static_texture(obj);
+  ASSERT_TRUE(chain);
+  EXPECT_EQ(chain->mipCount, 3u);
+}
+
 TEST_F(GxTextureCacheTest, ReusesIdenticalContentAtDifferentAddresses) {
   std::array<uint8_t, 16> first{};
   std::array<uint8_t, 16> second{};

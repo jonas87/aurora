@@ -787,7 +787,10 @@ gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
   if (obj.texObjId != 0) {
     if (const auto it = s_textureObjectCaches.find(obj.texObjId); it != s_textureObjectCaches.end()) {
       auto& entry = it->second;
-      if (entry.handle && entry.texDataVersion == obj.texDataVersion && entry.tlutObjId == 0) {
+      // The object's levels follow its filter (GXTexObj_::mip_count), which can change without a new version; a
+      // replacement keeps its own.
+      if (entry.handle && entry.texDataVersion == obj.texDataVersion && entry.tlutObjId == 0 &&
+          (entry.replacementId != 0 || entry.handle->mipCount == obj.mip_count())) {
         entry.lastUsedFrame = s_frameCount;
         ++s_stats.objectHits;
         return entry.handle;
