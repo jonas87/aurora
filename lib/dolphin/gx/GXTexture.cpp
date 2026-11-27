@@ -3,6 +3,7 @@
 
 #include "../../gfx/hash.hpp"
 #include "../../gfx/texture.hpp"
+#include "../../gx/texture.hpp"
 #include "dolphin/gx/GXAurora.h"
 
 #include <algorithm>
@@ -156,6 +157,10 @@ void GXInitTexObjData(GXTexObj* obj_, const void* data) {
 void GXInitTexObjStreaming(GXTexObj* obj_, GXBool streaming) {
   auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
   obj->set_streaming(streaming != GX_FALSE);
+}
+
+void GXPrepareTexObj(const GXTexObj* obj_) {
+  aurora::gx::texture::prepare_static_texture(*reinterpret_cast<const GXTexObj_*>(obj_));
 }
 
 void GXInitTexObjWrapMode(GXTexObj* obj_, GXTexWrapMode wrapS, GXTexWrapMode wrapT) {

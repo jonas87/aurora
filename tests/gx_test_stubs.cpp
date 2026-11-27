@@ -86,6 +86,7 @@ GXState::CopyTextureRef resolve_copy_texture(const GXState::CopyTextureKey& key)
 uint64_t current_frame() noexcept { return 0; }
 void touch_copy_texture(const void* dest) noexcept {}
 void reserve_copy_textures(GXTexFmt format, u32 divisor, u32 count, bool paletteResults) noexcept {}
+void prepare_static_texture(const GXTexObj_& obj) noexcept {}
 } // namespace texture
 void evict_texture_object(u32 texObjId) noexcept {
   for (auto& obj : g_gxState.loadedTextures) {
