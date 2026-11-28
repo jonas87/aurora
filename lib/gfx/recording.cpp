@@ -1,3 +1,4 @@
+#include "present_pacing.hpp"
 #include "recording.hpp"
 
 #include "encoding.hpp"
@@ -785,6 +786,7 @@ void record_xfb_present(imgui::DrawData drawData, wgpu::BindGroup rmlBindGroup, 
   const bool resample = !rmlBindGroup || rmlOverlay;
   auto request = record_present(efb.xfb, xfb_present_source(), resample, efb::aspect_lock());
   request.primary = true;
+  request.presentAt = present::take_next_present_time();
   request.imguiDrawData = std::move(drawData);
   request.rmlBindGroup = std::move(rmlBindGroup);
   request.rmlOverlay = rmlOverlay;

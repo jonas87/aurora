@@ -200,6 +200,22 @@ void aurora_shutdown();
 const AuroraEvent* aurora_update();
 bool aurora_begin_frame();
 void aurora_end_frame();
+/**
+ * Present pacing: the frame the next aurora_end_frame ends is presented no earlier than steadyNs, a time of the
+ * steady clock (std::chrono::steady_clock) in nanoseconds; 0 presents it as soon as it is ready. The render worker
+ * waits for it after submitting the frame's work, just before the present.
+ */
+void aurora_set_present_time(int64_t steadyNs);
+
+typedef struct {
+  int64_t target;    // The requested present time (0: as soon as ready), in steady-clock nanoseconds.
+  int64_t ready;     // When the frame was ready to present.
+  int64_t presented; // When its present returned.
+} AuroraPresentTime;
+
+/** Copies the primary target's present times since the last call, oldest first, at most capacity; returns how
+ * many. */
+size_t aurora_take_present_times(AuroraPresentTime* times, size_t capacity);
 
 void aurora_set_log_level(AuroraLogLevel level);
 void aurora_set_pause_on_focus_lost(bool value);
