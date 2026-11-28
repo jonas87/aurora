@@ -468,6 +468,10 @@ void evict_copy_texture(const void* dest) noexcept;
 void evict_texture_object(u32 texObjId) noexcept;
 void evict_tlut_object(u32 tlutObjId) noexcept;
 Vec2<uint32_t> logical_fb_size() noexcept;
+// The render target's pixels per logical unit: the EFB's render scale on the EFB and in an offscreen framebuffer at
+// that scale (GXCreateScaledFrameBuffer), 1 in other offscreen framebuffers. False, with the scales unchanged, while a
+// size is unknown.
+bool logical_scale(float& scaleX, float& scaleY) noexcept;
 // The render target size of a texture copy with this logical destination size (GXSetTexCopyDst).
 Vec2<uint32_t> scale_copy_dst(u32 logicalWidth, u32 logicalHeight);
 gfx::Viewport map_logical_viewport(const gfx::Viewport& logicalViewport) noexcept;

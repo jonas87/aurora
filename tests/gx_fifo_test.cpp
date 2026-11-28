@@ -26,6 +26,7 @@ extern std::atomic<uint32_t> endOffscreenCount;
 extern std::atomic<uint32_t> resolvePassCount;
 extern std::atomic<uint32_t> offscreenWidth;
 extern std::atomic<uint32_t> offscreenHeight;
+extern std::atomic<bool> offscreenEfbScale;
 } // namespace testing
 } // namespace aurora::gfx
 
@@ -164,6 +165,7 @@ TEST_F(GXFifoTest, FrameBufferCommandsPublishAfterTheirCompletePayload) {
   ASSERT_TRUE(wait_for(beginOffscreenCount, 1));
   EXPECT_EQ(offscreenWidth.load(std::memory_order_relaxed), 320u);
   EXPECT_EQ(offscreenHeight.load(std::memory_order_relaxed), 180u);
+  EXPECT_FALSE(offscreenEfbScale.load(std::memory_order_relaxed));
 
   GXCopyTex(reinterpret_cast<void*>(0x1234), GX_FALSE);
   ASSERT_TRUE(wait_for(resolvePassCount, 1));
@@ -199,6 +201,25 @@ TEST_F(GXFifoTest, PartialCopyUpdatesTheLargerCopyAndKeepsItsOwnTexture) {
   EXPECT_TRUE(gxState().copyTextures[capture].whole);
   ASSERT_TRUE(gxState().copyTextures.contains(lastRows));
   EXPECT_FALSE(gxState().copyTextures[lastRows].whole);
+}
+
+TEST_F(GXFifoTest, ScaledFrameBufferBeginsAnOffscreenPassAtTheEfbScale) {
+  using namespace aurora::gfx::testing;
+  beginOffscreenCount.store(0, std::memory_order_relaxed);
+  endOffscreenCount.store(0, std::memory_order_relaxed);
+
+  aurora::gx::fifo::init();
+  aurora::gx::fifo::begin_frame();
+  GXCreateScaledFrameBuffer(64, 96);
+  ASSERT_TRUE(wait_for(beginOffscreenCount, 1));
+  EXPECT_EQ(offscreenWidth.load(std::memory_order_relaxed), 64u);
+  EXPECT_EQ(offscreenHeight.load(std::memory_order_relaxed), 96u);
+  EXPECT_TRUE(offscreenEfbScale.load(std::memory_order_relaxed));
+
+  GXRestoreFrameBuffer();
+  ASSERT_TRUE(wait_for(endOffscreenCount, 1));
+  aurora::gx::fifo::drain();
+  aurora::gx::fifo::end_frame();
 }
 
 TEST_F(GXFifoTest, DrawDoneProcessesPublishedAndUnpublishedTailBeforeCallback) {
