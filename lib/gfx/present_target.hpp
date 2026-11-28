@@ -32,6 +32,8 @@ struct Request {
   bool rmlOverlay = false;
   bool primary = false;
   imgui::DrawData imguiDrawData;
+  // The steady-clock time in nanoseconds the present waits for (aurora_set_present_time); 0 presents at once.
+  int64_t presentAt = 0;
 };
 
 TargetSnapshot snapshot(PresentTargetId id, bool primary = false);

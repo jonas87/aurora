@@ -2,6 +2,7 @@
 #include <aurora/time.hpp>
 
 #ifdef AURORA_ENABLE_GX
+#include "gfx/present_pacing.hpp"
 #include "gfx/resources.hpp"
 #include "gfx/frame.hpp"
 #include "gfx/efb.hpp"
@@ -364,6 +365,22 @@ void aurora_shutdown() { aurora::shutdown(); }
 const AuroraEvent* aurora_update() { return aurora::update(); }
 bool aurora_begin_frame() { return aurora::begin_frame(); }
 void aurora_end_frame() { aurora::end_frame(); }
+void aurora_set_present_time(int64_t steadyNs) {
+#ifdef AURORA_ENABLE_GX
+  aurora::gfx::present::set_next_present_time(steadyNs);
+#else
+  (void)steadyNs;
+#endif
+}
+size_t aurora_take_present_times(AuroraPresentTime* times, size_t capacity) {
+#ifdef AURORA_ENABLE_GX
+  return aurora::gfx::present::take_present_times(times, capacity);
+#else
+  (void)times;
+  (void)capacity;
+  return 0;
+#endif
+}
 SDL_Window* aurora_get_window() { return aurora::window::get_sdl_window(); }
 AuroraWindowSize aurora_get_window_size() { return aurora::window::get_window_size(); }
 

@@ -1,6 +1,7 @@
 #include "present_target.hpp"
 
 #include "efb.hpp"
+#include "present_pacing.hpp"
 #include "frame.hpp"
 #include "render_worker.hpp"
 #include "../webgpu/gpu_prof.hpp"
@@ -448,6 +449,12 @@ void submit(const Request& request) {
     ZoneScopedN("Queue Submit");
     webgpu::g_queue.Submit(1, &buffer);
   }
+  // Present pacing: the frame's work is submitted; its present waits for the requested time.
+  const int64_t ready = steady_now();
+  if (request.presentAt > ready) {
+    ZoneScopedN("Present pacing");
+    wait_until(std::min(request.presentAt, ready + MaxPresentWaitNs));
+  }
   wgpu::ConvertibleStatus status = wgpu::Status::Error;
   {
     ZoneScopedN("Present");
@@ -457,6 +464,7 @@ void submit(const Request& request) {
     target.status = PresentTargetStatus::Ready;
     if (request.primary) {
       after_present();
+      record_present_time(request.presentAt, ready, steady_now());
     }
   } else {
     target.status = PresentTargetStatus::Lost;
