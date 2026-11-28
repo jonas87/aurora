@@ -82,7 +82,10 @@ void shutdown_resource_cache() {
 } // namespace detail
 
 BindGroupRef bind_group_ref(const WGPUBindGroupDescriptor& descriptor) {
-  const auto id = xxh3_hash(descriptor);
+  return bind_group_ref(descriptor, xxh3_hash(descriptor));
+}
+
+BindGroupRef bind_group_ref(const WGPUBindGroupDescriptor& descriptor, BindGroupRef id) {
   std::lock_guard lock{g_bindGroupCacheMutex};
   const auto it = g_cachedBindGroups.find(id);
   if (it == g_cachedBindGroups.end()) {
@@ -104,14 +107,16 @@ wgpu::BindGroup find_bind_group(BindGroupRef id) {
   return it->second.bindGroup;
 }
 
-wgpu::Sampler sampler_ref(const wgpu::SamplerDescriptor& descriptor) {
+WGPUSampler sampler_handle(const wgpu::SamplerDescriptor& descriptor) {
   const auto id = xxh3_hash(descriptor);
   std::lock_guard lock{g_samplerCacheMutex};
   auto it = g_cachedSamplers.find(id);
   if (it == g_cachedSamplers.end()) {
     it = g_cachedSamplers.try_emplace(id, webgpu::g_device.CreateSampler(&descriptor)).first;
   }
-  return it->second;
+  return it->second.Get();
 }
+
+wgpu::Sampler sampler_ref(const wgpu::SamplerDescriptor& descriptor) { return sampler_handle(descriptor); }
 
 } // namespace aurora::gfx
