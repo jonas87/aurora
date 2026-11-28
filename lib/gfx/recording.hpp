@@ -72,8 +72,14 @@ void finish();
 void begin_color_pass(const ColorPassDescriptor& desc);
 void end_color_pass();
 void queue_texture_copy(wgpu::TexelCopyTextureInfo src, wgpu::TexelCopyTextureInfo dst, wgpu::Extent3D size);
-void begin_offscreen(uint32_t width, uint32_t height);
+// efbScale: width and height are in EFB coordinates, and the framebuffer renders at the EFB's render scale
+// (GXCreateScaledFrameBuffer); otherwise they are the framebuffer's pixels.
+void begin_offscreen(uint32_t width, uint32_t height, bool efbScale = false);
 void end_offscreen();
+// The open offscreen framebuffer's size in EFB coordinates and the EFB's render size, whose scale it renders at;
+// zero on the EFB and in an offscreen framebuffer of its own scale.
+Vec2<uint32_t> offscreen_logical_size() noexcept;
+Vec2<uint32_t> offscreen_efb_size() noexcept;
 bool has_normal_attachment() noexcept;
 RenderTargetLayout get_render_target_layout() noexcept;
 namespace tex_palette_conv {

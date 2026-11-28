@@ -967,6 +967,10 @@ void handle_aurora(ByteReader& reader) noexcept {
     const u32 width = reader.read<u32>();
     const u32 height = reader.read<u32>();
     gfx::begin_offscreen(width, height);
+  } else if (subCmd == GX_AURORA_BEGIN_SCALED_OFFSCREEN) {
+    const u32 width = reader.read<u32>();
+    const u32 height = reader.read<u32>();
+    gfx::begin_offscreen(width, height, true);
   } else if (subCmd == GX_AURORA_END_OFFSCREEN) {
     gfx::end_offscreen();
   } else if (subCmd == GX_AURORA_DESTROY_TEXOBJ) {

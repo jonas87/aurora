@@ -236,7 +236,25 @@ void update() noexcept {
 }
 
 Vec2<uint32_t> logical_fb_size() noexcept {
-  return gfx::is_offscreen() ? gfx::get_render_target_size() : vi::configured_fb_size();
+  if (!gfx::is_offscreen()) {
+    return vi::configured_fb_size();
+  }
+  const auto logicalSize = gfx::offscreen_logical_size();
+  return logicalSize.x != 0 ? logicalSize : gfx::get_render_target_size();
+}
+
+bool logical_scale(float& scaleX, float& scaleY) noexcept {
+  // An offscreen framebuffer at the EFB's scale maps with the EFB's sizes, not its own rounded ones.
+  const auto efbSize = gfx::offscreen_efb_size();
+  const bool efbScaled = efbSize.x != 0;
+  const auto [logicalFbWidth, logicalFbHeight] = efbScaled ? vi::configured_fb_size() : logical_fb_size();
+  const auto [targetWidth, targetHeight] = efbScaled ? efbSize : gfx::get_render_target_size();
+  if (logicalFbWidth == 0 || logicalFbHeight == 0 || targetWidth == 0 || targetHeight == 0) {
+    return false;
+  }
+  scaleX = static_cast<float>(targetWidth) / static_cast<float>(logicalFbWidth);
+  scaleY = static_cast<float>(targetHeight) / static_cast<float>(logicalFbHeight);
+  return true;
 }
 
 gfx::Viewport map_logical_viewport(const gfx::Viewport& logicalViewport) noexcept {
@@ -244,14 +262,11 @@ gfx::Viewport map_logical_viewport(const gfx::Viewport& logicalViewport) noexcep
     return logicalViewport;
   }
 
-  const auto [logicalFbWidth, logicalFbHeight] = logical_fb_size();
-  const auto [targetWidth, targetHeight] = gfx::get_render_target_size();
-  if (logicalFbWidth == 0 || logicalFbHeight == 0 || targetWidth == 0 || targetHeight == 0) {
+  float scaleX = 1.f;
+  float scaleY = 1.f;
+  if (!logical_scale(scaleX, scaleY)) {
     return logicalViewport;
   }
-
-  const float scaleX = static_cast<float>(targetWidth) / static_cast<float>(logicalFbWidth);
-  const float scaleY = static_cast<float>(targetHeight) / static_cast<float>(logicalFbHeight);
   return {
       .left = logicalViewport.left * scaleX,
       .top = logicalViewport.top * scaleY,
@@ -267,14 +282,12 @@ gfx::ClipRect map_logical_scissor(const gfx::ClipRect& logicalScissor) noexcept 
     return logicalScissor;
   }
 
-  const auto [logicalFbWidth, logicalFbHeight] = logical_fb_size();
-  const auto [targetWidth, targetHeight] = gfx::get_render_target_size();
-  if (logicalFbWidth == 0 || logicalFbHeight == 0 || targetWidth == 0 || targetHeight == 0) {
+  float scaleX = 1.f;
+  float scaleY = 1.f;
+  if (!logical_scale(scaleX, scaleY)) {
     return logicalScissor;
   }
-
-  const float scaleX = static_cast<float>(targetWidth) / static_cast<float>(logicalFbWidth);
-  const float scaleY = static_cast<float>(targetHeight) / static_cast<float>(logicalFbHeight);
+  const auto [targetWidth, targetHeight] = gfx::get_render_target_size();
 
   const float left = static_cast<float>(logicalScissor.x) * scaleX;
   const float top = static_cast<float>(logicalScissor.y) * scaleY;

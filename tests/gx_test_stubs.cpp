@@ -107,6 +107,11 @@ void evict_copy_texture(const void* dest) noexcept {
 }
 void shutdown() noexcept {}
 Vec2<uint32_t> logical_fb_size() noexcept { return {640, 480}; }
+bool logical_scale(float& scaleX, float& scaleY) noexcept {
+  scaleX = 1.f;
+  scaleY = 1.f;
+  return true;
+}
 gfx::Viewport map_logical_viewport(const gfx::Viewport& logicalViewport) noexcept { return logicalViewport; }
 gfx::ClipRect map_logical_scissor(const gfx::ClipRect& logicalScissor) noexcept { return logicalScissor; }
 void set_logical_viewport(const gfx::Viewport& viewport) noexcept {
@@ -243,6 +248,7 @@ std::atomic<uint32_t> endOffscreenCount{0};
 std::atomic<uint32_t> resolvePassCount{0};
 std::atomic<uint32_t> offscreenWidth{0};
 std::atomic<uint32_t> offscreenHeight{0};
+std::atomic<bool> offscreenEfbScale{false};
 } // namespace testing
 
 void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
@@ -254,9 +260,10 @@ void copy_disp(ClipRect rect, const XfbCopy& xfb, bool clearColor, bool clearAlp
                Vec4<float> clearColorValue, float clearDepthValue) {}
 void clear_rect(ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth, Vec4<float> clearColorValue,
                 float clearDepthValue) {}
-void begin_offscreen(uint32_t width, uint32_t height) {
+void begin_offscreen(uint32_t width, uint32_t height, bool efbScale) {
   testing::offscreenWidth.store(width, std::memory_order_relaxed);
   testing::offscreenHeight.store(height, std::memory_order_relaxed);
+  testing::offscreenEfbScale.store(efbScale, std::memory_order_relaxed);
   testing::beginOffscreenCount.fetch_add(1, std::memory_order_release);
 }
 void end_offscreen() { testing::endOffscreenCount.fetch_add(1, std::memory_order_release); }

@@ -22,7 +22,9 @@
 #include "../window.hpp"
 #include "../dolphin/vi/vi_internal.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <new>
 #include <optional>
@@ -53,6 +55,10 @@ struct FrameRecorder {
   ClipRect suspendedEfbScissor;
   webgpu::TextureWithSampler offscreenColor;
   webgpu::TextureWithSampler offscreenDepth;
+  // An offscreen framebuffer at the EFB's render scale: its size in EFB coordinates and the EFB's render size; zero
+  // otherwise.
+  Vec2<uint32_t> offscreenLogicalSize{};
+  Vec2<uint32_t> offscreenEfbSize{};
   Viewport cachedViewport;
   ClipRect cachedScissor;
   bool suppressRenderWorker = false;
@@ -491,6 +497,8 @@ void finish_current_offscreen() {
   enqueue_pass(current_frame_packet(), g_recorder.currentRenderPass);
   g_recorder.offscreenColor = {};
   g_recorder.offscreenDepth = {};
+  g_recorder.offscreenLogicalSize = {};
+  g_recorder.offscreenEfbSize = {};
 }
 
 void start_offscreen(uint32_t width, uint32_t height) {
@@ -839,6 +847,8 @@ void shutdown_recording() {
   g_offscreenCache.clear();
   g_recorder.offscreenColor = {};
   g_recorder.offscreenDepth = {};
+  g_recorder.offscreenLogicalSize = {};
+  g_recorder.offscreenEfbSize = {};
   g_recorder.suspendedEfbPass.reset();
   g_recorder.inOffscreen = false;
   g_recorder.packet = nullptr;
@@ -1305,18 +1315,47 @@ bool push_custom_draw(DrawTypeId type, const void* payload, size_t payloadSize) 
   return true;
 }
 
-void begin_offscreen(uint32_t width, uint32_t height) {
+void begin_offscreen(uint32_t width, uint32_t height, bool efbScale) {
   ZoneScoped;
   AURORA_ASSERT(width != 0 && height != 0, "begin_offscreen requires nonzero dimensions ({}x{})", width, height);
   AURORA_ASSERT(g_recorder.active() && g_recorder.currentRenderPass != UINT32_MAX,
                 "begin_offscreen called outside of an active recording frame");
+
+  // At the EFB's render scale, the framebuffer's pixels are its EFB coordinates at that scale, and the coordinates
+  // inside it map with the EFB's own scale (gx::logical_scale), not the rounded ratio of the two sizes.
+  Vec2<uint32_t> logicalSize{};
+  Vec2<uint32_t> efbSize{};
+  uint32_t pixelWidth = width;
+  uint32_t pixelHeight = height;
+  if (efbScale) {
+    const auto& efbExtent = g_recorder.frame().efb.color.size;
+    const auto [logicalFbWidth, logicalFbHeight] = vi::configured_fb_size();
+    if (logicalFbWidth != 0 && logicalFbHeight != 0 && efbExtent.width != 0 && efbExtent.height != 0) {
+      logicalSize = {width, height};
+      efbSize = {efbExtent.width, efbExtent.height};
+      pixelWidth = std::max<uint32_t>(
+          1, static_cast<uint32_t>(std::lround(static_cast<double>(width) * efbExtent.width / logicalFbWidth)));
+      pixelHeight = std::max<uint32_t>(
+          1, static_cast<uint32_t>(std::lround(static_cast<double>(height) * efbExtent.height / logicalFbHeight)));
+    }
+  }
 
   if (g_recorder.inOffscreen) {
     finish_current_offscreen();
   } else {
     suspend_efb();
   }
-  start_offscreen(width, height);
+  start_offscreen(pixelWidth, pixelHeight);
+  g_recorder.offscreenLogicalSize = logicalSize;
+  g_recorder.offscreenEfbSize = efbSize;
+}
+
+Vec2<uint32_t> offscreen_logical_size() noexcept {
+  return g_recorder.inOffscreen ? g_recorder.offscreenLogicalSize : Vec2<uint32_t>{};
+}
+
+Vec2<uint32_t> offscreen_efb_size() noexcept {
+  return g_recorder.inOffscreen ? g_recorder.offscreenEfbSize : Vec2<uint32_t>{};
 }
 
 void end_offscreen() {

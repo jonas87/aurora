@@ -92,6 +92,15 @@ extern "C" {
 #define GX_AURORA_LOAD_DISP_COPY_SRC 0x003B
 
 /**
+ * Begins an offscreen framebuffer at the EFB's render scale (GXCreateScaledFrameBuffer).
+ *
+ * Command format:
+ *   u32 width in EFB coordinates
+ *   u32 height in EFB coordinates
+ */
+#define GX_AURORA_BEGIN_SCALED_OFFSCREEN 0x003C
+
+/**
  * Draw primitives with the vertex count derived from a byte length, as written by
  * GXBegin(prim, fmt, GX_AUTO). Must be followed by a u8 draw opcode (vtxfmt|prim),
  * a u32 vertex data byte length, then that many bytes of vertex data. The byte length
@@ -235,6 +244,13 @@ void GXSetProjectionFull(const void* mtx);
  * Use GXCopyTex to resolve the offscreen content into a texture.
  */
 void GXCreateFrameBuffer(u32 width, u32 height);
+
+/**
+ * Like GXCreateFrameBuffer, with the width and height in EFB coordinates: the framebuffer renders at the EFB's render
+ * scale, and the viewport, scissor and copies inside it map as they do on the EFB. Rendering a game draws into a
+ * corner of the EFB and copies out can move into one unchanged, leaving the EFB untouched.
+ */
+void GXCreateScaledFrameBuffer(u32 width, u32 height);
 
 /**
  * Restore rendering to the main EFB framebuffer.
