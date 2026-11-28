@@ -99,6 +99,10 @@ Range push_indices(ArrayRef<T> data, size_t alignment) {
   return push_indices(reinterpret_cast<const uint8_t*>(data.data()), data.size() * sizeof(T), alignment);
 }
 Range push_uniform(const uint8_t* data, size_t length);
+// A uniform block written in place: begin_uniform aligns the frame's uniform buffer for it and returns the buffer to
+// append it to (null outside a recording frame), end_uniform its range. It saves the block's copy push_uniform makes.
+ByteBuffer* begin_uniform(size_t& begin);
+Range end_uniform(size_t begin, const ByteBuffer& target);
 template <typename T>
 Range push_uniform(const T& data) {
   return push_uniform(reinterpret_cast<const uint8_t*>(&data), sizeof(T));

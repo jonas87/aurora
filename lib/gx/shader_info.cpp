@@ -667,9 +667,13 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
 
 gfx::Range build_uniform(const ShaderInfo& info) noexcept {
   ZoneScoped;
-  static ByteBuffer buf;
-  buf.clear();
-  fill_uniform(buf, info);
-  return gfx::push_uniform(buf.data(), buf.size());
+  // Written straight into the frame's uniform buffer.
+  size_t begin = 0;
+  ByteBuffer* target = gfx::begin_uniform(begin);
+  if (target == nullptr) {
+    return {};
+  }
+  fill_uniform(*target, info);
+  return gfx::end_uniform(begin, *target);
 }
 } // namespace aurora::gx

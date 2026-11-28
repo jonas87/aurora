@@ -1732,6 +1732,25 @@ Range push_uniform(const uint8_t* data, size_t length) {
   return push(current_frame_packet().uniforms, data, length, resources().limits.minUniformBufferOffsetAlignment);
 }
 
+ByteBuffer* begin_uniform(size_t& begin) {
+  if (!check_recording("begin_uniform")) {
+    return nullptr;
+  }
+  auto& target = current_frame_packet().uniforms;
+  const size_t alignment = resources().limits.minUniformBufferOffsetAlignment;
+  const size_t start = target.size();
+  const size_t alignedStart = alignment != 0 ? AURORA_ALIGN(start, alignment) : start;
+  if (alignedStart > start) {
+    target.append_zeroes(alignedStart - start);
+  }
+  begin = target.size();
+  return &target;
+}
+
+Range end_uniform(size_t begin, const ByteBuffer& target) {
+  return {static_cast<uint32_t>(begin), static_cast<uint32_t>(target.size() - begin)};
+}
+
 Range push_storage(const uint8_t* data, size_t length) {
   ZoneScoped;
   if (!check_recording("push_storage")) {
