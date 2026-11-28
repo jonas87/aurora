@@ -163,6 +163,8 @@ static Range push_test_data(std::vector<uint8_t>& target, const uint8_t* data, s
 }
 Range push_uniform(const uint8_t* data, size_t length) { return push_test_data(testing::uniformData, data, length); }
 Range push_storage(const uint8_t* data, size_t length) { return push_test_data(testing::storageData, data, length); }
+// The array cache holds nothing here: every array goes with the frame's storage.
+Range push_cached_storage(const uint8_t* data, size_t length) { return push_storage(data, length); }
 
 Vec2<uint32_t> get_render_target_size() noexcept { return {640, 480}; }
 void set_viewport(const Viewport& viewport) noexcept {}

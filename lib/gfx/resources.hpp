@@ -4,6 +4,7 @@
 
 namespace aurora::gfx {
 inline constexpr bool UseTextureBuffer = true;
+
 // The sizes of the buffers a frame's draws are written to (AuroraConfig::bufferSizes, a size left at 0 taking its
 // default here) and their places, in this order, in a frame's staging buffer.
 struct BufferSizes {
@@ -12,6 +13,9 @@ struct BufferSizes {
   uint64_t index = 2097152;          // 2 MiB
   uint64_t storage = 8388608;        // 8 MiB
   uint64_t textureUpload = 25165824; // 24 MiB
+  // The storage buffer's part past a frame's own storage that keeps vertex arrays from frame to frame
+  // (push_cached_storage); on the GPU only, and none by default.
+  uint64_t arrayCache = 0;
 
   uint64_t uniform_offset() const noexcept { return vertex; }
   uint64_t index_offset() const noexcept { return uniform_offset() + uniform; }

@@ -30,6 +30,14 @@ struct StagingHighWater {
   size_t textureUploadCount = 0;
 };
 
+// A vertex array entering the storage buffer's array cache: its bytes in the frame's staging storage and its
+// place in the cache, both from the start of their buffers' storage parts.
+struct ArrayFill {
+  uint32_t stagingOffset = 0;
+  uint32_t cacheOffset = 0;
+  uint32_t size = 0;
+};
+
 struct CustomDrawCommand {
   DrawTypeId type = 0;
   uint32_t payloadSize = 0;
@@ -212,6 +220,8 @@ struct FrameOp {
   ResampleTask* resampleTask = nullptr;
   StagingHighWater highWater;
   std::vector<const TextureUpload*> textureUploads;
+  // The array cache fills recorded since the frame's previous op, copied before this one.
+  std::vector<ArrayFill> arrayFills;
 };
 
 using RenderPassList = std::deque<RenderPass>;
@@ -234,6 +244,9 @@ struct FramePacket {
   ByteBuffer indices;
   ByteBuffer storage;
   ByteBuffer textureUpload;
+  // The array cache fills of the frame; an op takes those recorded since the op before it.
+  std::vector<ArrayFill> arrayFills;
+  size_t arrayFillsTaken = 0;
   wgpu::CommandEncoder encoder;
   std::vector<AfterSubmitCallback> afterSubmitCallbacks;
   uint64_t frameId = 0;

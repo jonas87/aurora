@@ -456,11 +456,32 @@ void copy_staging_to_high_water(wgpu::CommandEncoder& cmd, FramePacket& frame, c
     frame.copied.textureUploadCount = op.textureUploads.size();
   }
 }
+
+// Copies the vertex arrays that entered the array cache since the op before into their places past the frame's
+// storage (push_cached_storage). The queue runs frames in order: an earlier frame's draws have read a place before a
+// later frame's fill replaces it.
+void copy_array_fills(wgpu::CommandEncoder& cmd, const FramePacket& frame, const FrameOp& op) {
+  if (op.arrayFills.empty()) {
+    return;
+  }
+  const webgpu::gpu_prof::Zone zone{cmd, "Array cache fills"};
+  const auto& staging = staging_buffer(frame.stagingBuffer);
+  const auto& storage = resources().storageBuffer;
+  for (const auto& fill : op.arrayFills) {
+    cmd.CopyBufferToBuffer(staging, buffer_sizes().storage_offset() + fill.stagingOffset, storage,
+                           buffer_sizes().storage + fill.cacheOffset, AURORA_ALIGN(fill.size, 4));
+  }
+}
 } // namespace
 
 namespace detail {
+void encode_array_fills(wgpu::CommandEncoder& cmd, const FramePacket& frame, const FrameOp& op) {
+  copy_array_fills(cmd, frame, op);
+}
+
 void encode_op(wgpu::CommandEncoder& cmd, FramePacket& frame, const FrameOp& op) {
   copy_staging_to_high_water(cmd, frame, op);
+  copy_array_fills(cmd, frame, op);
   switch (op.type) {
   case FrameOpType::RenderPass:
     if (op.renderPass != nullptr) {

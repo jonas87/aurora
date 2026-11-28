@@ -22,6 +22,8 @@ DrawPassState& draw_pass_state() noexcept;
 
 namespace detail {
 void encode_op(wgpu::CommandEncoder& encoder, FramePacket& frame, const FrameOp& op);
+// Only the op's array cache fills, for an op with nothing else to encode (push_cached_storage has counted on them).
+void encode_array_fills(wgpu::CommandEncoder& encoder, const FramePacket& frame, const FrameOp& op);
 }
 
 } // namespace aurora::gfx

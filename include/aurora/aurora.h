@@ -138,6 +138,8 @@ typedef struct {
  * The sizes in bytes of the buffers a frame's draws are written to: vertices, indices, uniform blocks, storage (vertex
  * arrays and other per-draw data) and texture uploads. A size left at 0 takes its default. A frame that outgrows one
  * of them aborts; each is held once on the GPU and once in each of the frames being written ahead.
+ * arrayCache sizes a part of the storage buffer, on the GPU only, that keeps the vertex arrays draws read from frame
+ * to frame by their contents, so that an unchanged array is not sent again each frame; 0, the default, keeps none.
  */
 typedef struct {
   uint32_t vertex;
@@ -145,6 +147,7 @@ typedef struct {
   uint32_t uniform;
   uint32_t storage;
   uint32_t textureUpload;
+  uint32_t arrayCache;
 } AuroraBufferSizes;
 
 typedef void (*AuroraLogCallback)(AuroraLogLevel level, const char* module, const char* message, unsigned int len);

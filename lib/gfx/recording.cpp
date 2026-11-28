@@ -2,6 +2,7 @@
 
 #include "encoding.hpp"
 #include "frame.hpp"
+#include "hash.hpp"
 #include "lru_cache.hpp"
 #include "resource_cache.hpp"
 
@@ -34,6 +35,7 @@
 #include <utility>
 #include <vector>
 
+#include <absl/container/flat_hash_map.h>
 #include <magic_enum.hpp>
 #include <tracy/Tracy.hpp>
 
@@ -278,6 +280,9 @@ FrameOp capture_frame_op(FramePacket& frame, FrameOpType type, uint32_t index) {
   for (size_t i = 0; i < op.highWater.textureUploadCount; ++i) {
     op.textureUploads.push_back(&frame.textureUploads[i]);
   }
+  op.arrayFills.assign(frame.arrayFills.begin() + static_cast<std::ptrdiff_t>(frame.arrayFillsTaken),
+                       frame.arrayFills.end());
+  frame.arrayFillsTaken = frame.arrayFills.size();
   return op;
 }
 
@@ -568,6 +573,7 @@ void enqueue_op(FramePacket& frame, uint32_t opIndex) {
   render_worker::enqueue_encode_pass(frame.frameId, opIndex, [packet = &frame, op = std::move(op)] {
     if (op.renderPass == nullptr && op.textureCopy == nullptr && op.encoderTask == nullptr &&
         op.readbackTask == nullptr && op.resampleTask == nullptr) {
+      encode_array_fills(packet->encoder, *packet, op);
       return;
     }
     encode_op(packet->encoder, *packet, op);
@@ -741,6 +747,11 @@ present::Request record_present(present::TargetSnapshot target, webgpu::TextureW
 }
 } // namespace
 
+namespace {
+// Empties the array cache at a frame's start once it is full (push_cached_storage).
+void begin_array_cache_frame() noexcept;
+} // namespace
+
 namespace detail {
 
 void prepare_recording() {
@@ -751,6 +762,7 @@ void prepare_recording() {
 
 void begin_recording(FramePacket& packet, size_t frameSlot) {
   CHECK(!g_recorder.active(), "A recording session is already active");
+  begin_array_cache_frame();
   if (!packet.efb.layout.colorAttachmentCount) {
     prepare_recording();
     packet.efb = efb::capture_state();
@@ -1758,6 +1770,113 @@ Range push_storage(const uint8_t* data, size_t length) {
   }
   return push(current_frame_packet().storage, data, length, resources().limits.minStorageBufferOffsetAlignment);
 }
+
+namespace {
+// The array cache's contents, by the low half of their XXH3-128 hash, in the storage buffer past a frame's own storage.
+struct CachedArray {
+  uint64_t hashHigh = 0;
+  uint32_t offset = 0;
+  uint32_t size = 0;
+};
+
+// What an array address last held: its contents' hash, and whether they changed between sightings (an array the
+// game rewrites), from which frame. Addresses not seen for ArrayAddressFrames frames are forgotten, and a changed one
+// is looked at again after as many.
+struct ArrayAddress {
+  uint64_t hash = 0;
+  uint64_t lastSeen = 0;
+  uint64_t dynamicSince = 0;
+  bool dynamic = false;
+};
+constexpr uint64_t ArrayAddressFrames = 600;
+
+struct ArrayCache {
+  absl::flat_hash_map<uint64_t, CachedArray> arrays;
+  absl::flat_hash_map<std::pair<uintptr_t, size_t>, ArrayAddress> addresses;
+  uint64_t used = 0;
+  uint64_t frame = 0;
+  bool full = false;
+};
+ArrayCache g_arrayCache;
+
+void empty_array_cache() noexcept {
+  g_arrayCache.arrays.clear();
+  g_arrayCache.addresses.clear();
+  g_arrayCache.used = 0;
+  g_arrayCache.full = false;
+}
+
+void begin_array_cache_frame() noexcept {
+  auto& cache = g_arrayCache;
+  if (cache.full) {
+    empty_array_cache();
+  }
+  if (++cache.frame % ArrayAddressFrames == 0) {
+    absl::erase_if(cache.addresses,
+                   [&](const auto& entry) { return cache.frame - entry.second.lastSeen >= ArrayAddressFrames; });
+  }
+}
+} // namespace
+
+Range push_cached_storage(const uint8_t* data, size_t length) {
+  ZoneScoped;
+  if (!check_recording("push_cached_storage")) {
+    return {};
+  }
+  if (data == nullptr || length == 0 || buffer_sizes().arrayCache == 0) {
+    return push_storage(data, length);
+  }
+  auto& cache = g_arrayCache;
+  auto& address = cache.addresses[{reinterpret_cast<uintptr_t>(data), length}];
+  address.lastSeen = cache.frame;
+  if (address.dynamic) {
+    if (cache.frame - address.dynamicSince < ArrayAddressFrames) {
+      return push_storage(data, length);
+    }
+    // Looked at again: the contents may have settled.
+    address = ArrayAddress{.lastSeen = cache.frame};
+  }
+  const XXH128_hash_t hash = XXH3_128bits(data, length);
+  const bool seen = address.hash != 0;
+  if (seen && address.hash != hash.low64) {
+    address.dynamic = true;
+    address.dynamicSince = cache.frame;
+    return push_storage(data, length);
+  }
+  address.hash = hash.low64;
+
+  if (const auto it = cache.arrays.find(hash.low64); it != cache.arrays.end()) {
+    if (it->second.hashHigh != hash.high64 || it->second.size != length) {
+      return push_storage(data, length);
+    }
+    return {static_cast<uint32_t>(buffer_sizes().storage + it->second.offset), static_cast<uint32_t>(length)};
+  }
+  // An array enters the cache once its address has held the same contents at two sightings: an array written anew
+  // each frame, or at a new address each frame (a ring of geometry), stays with the frame's storage.
+  if (!seen) {
+    return push_storage(data, length);
+  }
+  const uint64_t offset = AURORA_ALIGN(cache.used, resources().limits.minStorageBufferOffsetAlignment);
+  if (cache.full || offset + AURORA_ALIGN(length, 4) > buffer_sizes().arrayCache) {
+    cache.full = true;
+    return push_storage(data, length);
+  }
+  const Range staged = push_storage(data, length);
+  cache.used = offset + AURORA_ALIGN(length, 4);
+  cache.arrays.emplace(hash.low64, CachedArray{
+                                       .hashHigh = hash.high64,
+                                       .offset = static_cast<uint32_t>(offset),
+                                       .size = static_cast<uint32_t>(length),
+                                   });
+  current_frame_packet().arrayFills.push_back(ArrayFill{
+      .stagingOffset = staged.offset,
+      .cacheOffset = static_cast<uint32_t>(offset),
+      .size = static_cast<uint32_t>(length),
+  });
+  return {static_cast<uint32_t>(buffer_sizes().storage + offset), static_cast<uint32_t>(length)};
+}
+
+void reset_array_cache() noexcept { empty_array_cache(); }
 
 Range push_texture_data(const uint8_t* data, u32 bytesPerRow, u32 rowsPerImage) {
   // For CopyBufferToTexture, we need an alignment of 256 per row (see Dawn kTextureBytesPerRowAlignment)

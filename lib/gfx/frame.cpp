@@ -423,6 +423,7 @@ void initialize() {
   setSize(g_bufferSizes.index, g_config.bufferSizes.index);
   setSize(g_bufferSizes.storage, g_config.bufferSizes.storage);
   setSize(g_bufferSizes.textureUpload, g_config.bufferSizes.textureUpload);
+  setSize(g_bufferSizes.arrayCache, g_config.bufferSizes.arrayCache);
 
   const auto createBuffer = [](wgpu::Buffer& out, wgpu::BufferUsage usage, uint64_t size, const char* label) {
     if (size <= 0) {
@@ -443,7 +444,8 @@ void initialize() {
   createBuffer(g_resources.indexBuffer, wgpu::BufferUsage::Index | wgpu::BufferUsage::CopyDst, g_bufferSizes.index,
                "Shared Index Buffer");
   createBuffer(g_resources.storageBuffer, wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
-               g_bufferSizes.storage, "Shared Storage Buffer");
+               g_bufferSizes.storage + g_bufferSizes.arrayCache, "Shared Storage Buffer");
+  reset_array_cache();
   for (size_t i = 0; i < g_stagingBuffers.size(); ++i) {
     const auto label = fmt::format("Staging Buffer {}", i);
     createBuffer(g_stagingBuffers[i], wgpu::BufferUsage::MapWrite | wgpu::BufferUsage::CopySrc, g_bufferSizes.staging(),
