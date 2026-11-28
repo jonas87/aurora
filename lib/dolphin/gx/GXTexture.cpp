@@ -258,6 +258,19 @@ void GXLoadTexObj(GXTexObj* obj_, GXTexMapID id) {
   emit_loaded_texobj_metadata(*obj, id);
 }
 
+void GXSetTexImageObject(const GXTexObj* obj_, GXTexMapID id) {
+  const auto* obj = reinterpret_cast<const GXTexObj_*>(obj_);
+  GX_WRITE_AURORA(GX_AURORA_SET_TEX_IMG_OBJ);
+  GX_WRITE_U8(static_cast<u8>(id));
+  GX_WRITE_U64(reinterpret_cast<u64>(obj->data));
+  GX_WRITE_U32(obj->width());
+  GX_WRITE_U32(obj->height());
+  GX_WRITE_U32(obj->format());
+  GX_WRITE_U32(obj->texObjId);
+  GX_WRITE_U32(obj->texDataVersion);
+  GX_WRITE_U8(obj->streaming() ? 1 : 0);
+}
+
 u32 GXGetTexBufferSize(u16 width, u16 height, u32 fmt, GXBool mips, u8 maxLod) {
   s32 shiftX = 0;
   s32 shiftY = 0;

@@ -1807,6 +1807,74 @@ TEST_F(GXFifoTest, TexObjExplicitDimensions_DoNotWrapAtTenBitBoundary) {
   EXPECT_EQ(slot.height(), 1024u);
 }
 
+// An image switch takes the object's streamed mark, as a load does: a map that held a streamed object's image does not
+// treat the next object's image as streamed.
+TEST_F(GXFifoTest, SetTexImageObjectTakesTheObjectsStreamedMark) {
+  alignas(32) u8 first[512]{};
+  alignas(32) u8 movie[512]{};
+  alignas(32) u8 still[512]{};
+  GXTexObj loaded{};
+  GXTexObj streamed{};
+  GXTexObj plain{};
+  GXInitTexObj(&loaded, first, 32, 32, GX_TF_I4, GX_REPEAT, GX_REPEAT, GX_FALSE);
+  GXInitTexObj(&streamed, movie, 32, 32, GX_TF_I4, GX_REPEAT, GX_REPEAT, GX_FALSE);
+  GXInitTexObjStreaming(&streamed, GX_TRUE);
+  GXInitTexObj(&plain, still, 32, 32, GX_TF_I4, GX_REPEAT, GX_REPEAT, GX_FALSE);
+
+  GXLoadTexObj(&loaded, GX_TEXMAP0);
+  GXSetTexImageObject(&streamed, GX_TEXMAP0);
+  auto bytes = capture_fifo();
+  reset_gx_state();
+  decode_fifo(bytes);
+  EXPECT_TRUE(gxState().loadedTextures[GX_TEXMAP0].streaming());
+
+  GXSetTexImageObject(&plain, GX_TEXMAP0);
+  bytes = capture_fifo();
+  decode_fifo(bytes);
+  EXPECT_FALSE(gxState().loadedTextures[GX_TEXMAP0].streaming());
+  EXPECT_EQ(gxState().loadedTextures[GX_TEXMAP0].data, still);
+}
+
+TEST_F(GXFifoTest, SetTexImageObjectKeepsTheObjectsIdentityOnlyForItsOwnKind) {
+  alignas(32) u8 first[512]{};
+  alignas(32) u8 second[512]{};
+  alignas(32) u8 larger[2048]{};
+  GXTexObj loaded{};
+  GXTexObj sameKind{};
+  GXTexObj otherKind{};
+  GXInitTexObj(&loaded, first, 32, 32, GX_TF_I4, GX_REPEAT, GX_REPEAT, GX_FALSE);
+  GXInitTexObj(&sameKind, second, 32, 32, GX_TF_I4, GX_REPEAT, GX_REPEAT, GX_FALSE);
+  GXInitTexObj(&otherKind, larger, 64, 64, GX_TF_I4, GX_REPEAT, GX_REPEAT, GX_FALSE);
+
+  GXLoadTexObj(&loaded, GX_TEXMAP0);
+  GXSetTexImageObject(&sameKind, GX_TEXMAP0);
+  auto bytes = capture_fifo();
+  EXPECT_TRUE(has_aurora_cmd(bytes, GX_AURORA_SET_TEX_IMG_OBJ));
+  reset_gx_state();
+  decode_fifo(bytes);
+  {
+    const auto& slot = gxState().loadedTextures[GX_TEXMAP0];
+    const auto& object = *reinterpret_cast<const GXTexObj_*>(&sameKind);
+    EXPECT_EQ(slot.data, second);
+    EXPECT_EQ(slot.texObjId, object.texObjId);
+    EXPECT_NE(slot.texObjId, 0u);
+    EXPECT_EQ(slot.texDataVersion, object.texDataVersion);
+  }
+
+  GXLoadTexObj(&loaded, GX_TEXMAP0);
+  GXSetTexImageObject(&otherKind, GX_TEXMAP0);
+  bytes = capture_fifo();
+  reset_gx_state();
+  decode_fifo(bytes);
+  {
+    const auto& slot = gxState().loadedTextures[GX_TEXMAP0];
+    EXPECT_EQ(slot.data, larger);
+    EXPECT_EQ(slot.width(), 32u);
+    EXPECT_EQ(slot.texObjId, 0u);
+    EXPECT_EQ(slot.texDataVersion, 0u);
+  }
+}
+
 TEST_F(GXFifoTest, LoadTexObjCiAndTlut_PopulatesTextureAndTlutSlots) {
   alignas(32) u8 image[64]{};
   alignas(32) u16 palette[16]{};
