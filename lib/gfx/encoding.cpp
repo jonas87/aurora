@@ -34,6 +34,14 @@ using webgpu::g_queue;
 namespace {
 constexpr Module Log{"aurora::gfx"};
 WGPURenderPipeline g_currentPipeline = nullptr;
+DrawPassState g_drawPassState;
+// The encoder of the last draw command in the pass: another kind of draw sets the pass's state its own way.
+DrawEncoder g_lastDrawEncoder = nullptr;
+
+void forget_draw_state() {
+  g_drawPassState = {};
+  g_lastDrawEncoder = nullptr;
+}
 
 void apply_viewport(const wgpu::RenderPassEncoder& pass, const Viewport& vp) {
   // A depth range outside [0, 1] spans the whole range here; the GX pipelines drawn with it apply
@@ -112,6 +120,7 @@ void execute_encoder_task(wgpu::CommandEncoder& cmd, FramePacket& frame, const E
 void render_pass(const wgpu::RenderPassEncoder& pass, FramePacket& frame, RenderPass& passInfo) {
   ZoneScoped;
   g_currentPipeline = nullptr;
+  forget_draw_state();
 #ifdef AURORA_GFX_DEBUG_GROUPS
   std::vector<std::string> lastDebugGroupStack;
 #endif
@@ -159,12 +168,17 @@ void render_pass(const wgpu::RenderPassEncoder& pass, FramePacket& frame, Render
     case CommandType::Draw: {
       auto& draw = cmd.data.draw;
       if (draw.encoder != nullptr) {
+        if (draw.encoder != g_lastDrawEncoder) {
+          g_drawPassState = {};
+          g_lastDrawEncoder = draw.encoder;
+        }
         draw.encoder(draw.payload.data(), pass, passInfo);
       }
     } break;
     case CommandType::CustomDraw: {
       render_custom_draw(cmd.data.customDraw, pass, passInfo);
       g_currentPipeline = nullptr;
+      forget_draw_state();
       pass.SetBindGroup(0, resources().staticBindGroup);
       pass.SetBindGroup(2, gx::g_emptyTextureBindGroup);
       if (hasViewport) {
@@ -478,6 +492,8 @@ void encode_op(wgpu::CommandEncoder& cmd, FramePacket& frame, const FrameOp& op)
   }
 }
 } // namespace detail
+
+DrawPassState& draw_pass_state() noexcept { return g_drawPassState; }
 
 void bind_pipeline(const wgpu::RenderPipeline& pipeline, const wgpu::RenderPassEncoder& pass) {
   if (pipeline.Get() == g_currentPipeline) {

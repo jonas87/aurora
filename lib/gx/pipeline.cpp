@@ -63,22 +63,38 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
     return;
   }
   const auto& resources = gfx::detail::resources();
+  // Only what differs from the draw before is set: the pass keeps the rest (draw_pass_state).
+  auto& bound = gfx::draw_pass_state();
   pass.SetImmediates(0, &data.immediateData, sizeof(data.immediateData));
-  const std::array offsets{data.uniformRange.offset};
-  pass.SetBindGroup(1, resources.uniformBindGroup, offsets.size(), offsets.data());
-  if (data.bindGroups.textureBindGroup) {
-    pass.SetBindGroup(2, gfx::find_bind_group(data.bindGroups.textureBindGroup));
+  if (!bound.hasUniformOffset || bound.uniformOffset != data.uniformRange.offset) {
+    const std::array offsets{data.uniformRange.offset};
+    pass.SetBindGroup(1, resources.uniformBindGroup, offsets.size(), offsets.data());
+    bound.hasUniformOffset = true;
+    bound.uniformOffset = data.uniformRange.offset;
   }
-  pass.SetIndexBuffer(resources.indexBuffer, wgpu::IndexFormat::Uint16, data.idxRange.offset, data.idxRange.size);
-  if (data.dstAlpha != UINT32_MAX) {
+  if (data.bindGroups.textureBindGroup &&
+      (!bound.hasTextureBindGroup || bound.textureBindGroup != data.bindGroups.textureBindGroup)) {
+    pass.SetBindGroup(2, gfx::find_bind_group(data.bindGroups.textureBindGroup));
+    bound.hasTextureBindGroup = true;
+    bound.textureBindGroup = data.bindGroups.textureBindGroup;
+  }
+  // The frame's whole index buffer, bound once: each draw starts at its own range.
+  if (data.indexCount != 0 && !bound.indexBufferBound) {
+    pass.SetIndexBuffer(resources.indexBuffer, wgpu::IndexFormat::Uint16);
+    bound.indexBufferBound = true;
+  }
+  if (data.dstAlpha != UINT32_MAX && (!bound.hasBlendAlpha || bound.blendAlpha != data.dstAlpha)) {
     const wgpu::Color color{0.f, 0.f, 0.f, data.dstAlpha / 255.f};
     pass.SetBlendConstant(&color);
+    bound.hasBlendAlpha = true;
+    bound.blendAlpha = data.dstAlpha;
   }
+  const uint32_t firstIndex = data.idxRange.offset / sizeof(uint16_t);
   const auto draw = [&] {
     if (data.indexCount == 0) {
       pass.Draw(data.vtxCount, data.instanceCount);
     } else {
-      pass.DrawIndexed(data.indexCount, data.instanceCount);
+      pass.DrawIndexed(data.indexCount, data.instanceCount, firstIndex);
     }
   };
   if (pipeline.prepass) {
