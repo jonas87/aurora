@@ -11,6 +11,7 @@
 #include "efb_wgsl.hpp"
 
 #include <absl/container/flat_hash_map.h>
+#include <algorithm>
 
 #include "texture_convert.hpp"
 
@@ -845,7 +846,7 @@ void snapshot_depth(const wgpu::CommandEncoder& cmd, const wgpu::TextureView& sr
 }
 
 wgpu::TextureView resolve_depth(const wgpu::CommandEncoder& cmd, const wgpu::TextureView& srcDepth, uint32_t width,
-                                uint32_t height) {
+                                uint32_t height, const ClipRect* region) {
   if (!g_depthResolvePipeline) {
     return {};
   }
@@ -875,9 +876,11 @@ wgpu::TextureView resolve_depth(const wgpu::CommandEncoder& cmd, const wgpu::Tex
   };
   const auto bindGroup = g_device.CreateBindGroup(&bindGroupDescriptor);
 
+  // A region keeps the cost to the pixels a copy reads: a game's depth copies are often small (a light's occlusion
+  // test), and a whole resolve of a large multisampled buffer for each one adds up to milliseconds a frame.
   const wgpu::RenderPassDepthStencilAttachment depthAttachment{
       .view = g_depthResolveView,
-      .depthLoadOp = wgpu::LoadOp::Clear,
+      .depthLoadOp = region != nullptr ? wgpu::LoadOp::Load : wgpu::LoadOp::Clear,
       .depthStoreOp = wgpu::StoreOp::Store,
       .depthClearValue = 0.f,
   };
@@ -887,6 +890,16 @@ wgpu::TextureView resolve_depth(const wgpu::CommandEncoder& cmd, const wgpu::Tex
       .timestampWrites = webgpu::gpu_prof::pass_writes("Depth resolve"),
   };
   const auto pass = cmd.BeginRenderPass(&renderPassDescriptor);
+  if (region != nullptr) {
+    const auto clampTo = [](int64_t value, uint32_t limit) {
+      return static_cast<uint32_t>(std::clamp<int64_t>(value, 0, limit));
+    };
+    const uint32_t left = clampTo(int64_t{region->x} - 1, width);
+    const uint32_t top = clampTo(int64_t{region->y} - 1, height);
+    const uint32_t right = clampTo(int64_t{region->x} + region->width + 1, width);
+    const uint32_t bottom = clampTo(int64_t{region->y} + region->height + 1, height);
+    pass.SetScissorRect(left, top, right - left, bottom - top);
+  }
   pass.SetPipeline(g_depthResolvePipeline);
   pass.SetBindGroup(0, bindGroup);
   pass.Draw(3);

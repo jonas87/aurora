@@ -270,7 +270,7 @@ void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo,
     auto srcView = isDepth ? passInfo.copySourceDepthView : passInfo.copySourceView;
     if (isDepth && passInfo.msaaSamples > 1) {
       const auto& efbSize = passInfo.colorAttachments[SceneColorAttachmentIndex].size;
-      srcView = tex_copy_conv::resolve_depth(cmd, srcView, efbSize.width, efbSize.height);
+      srcView = tex_copy_conv::resolve_depth(cmd, srcView, efbSize.width, efbSize.height, &passInfo.resolveRect);
     }
     const tex_copy_conv::ConvRequest convReq{
         .fmt = passInfo.resolveFormat,
