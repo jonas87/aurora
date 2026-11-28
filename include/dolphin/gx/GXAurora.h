@@ -101,6 +101,22 @@ extern "C" {
 #define GX_AURORA_BEGIN_SCALED_OFFSCREEN 0x003C
 
 /**
+ * Sets the image data pointer of a texture map from a texture object (GXSetTexImageObject): as
+ * GX_AURORA_SET_TEX_IMG_PTR, with the object's identity, which the texture cache keys on when the object's size and
+ * format are the map's.
+ *
+ * Command format:
+ *   u8  texture map ID
+ *   u64 image data pointer
+ *   u32 width
+ *   u32 height
+ *   u32 format
+ *   u32 texture object ID
+ *   u32 texture data version
+ */
+#define GX_AURORA_SET_TEX_IMG_OBJ 0x003D
+
+/**
  * Draw primitives with the vertex count derived from a byte length, as written by
  * GXBegin(prim, fmt, GX_AUTO). Must be followed by a u8 draw opcode (vtxfmt|prim),
  * a u32 vertex data byte length, then that many bytes of vertex data. The byte length
@@ -251,6 +267,14 @@ void GXCreateFrameBuffer(u32 width, u32 height);
  * corner of the EFB and copies out can move into one unchanged, leaving the EFB untouched.
  */
 void GXCreateScaledFrameBuffer(u32 width, u32 height);
+
+/**
+ * Points a texture map at another texture object's image, keeping the map's size, format and filtering: the hardware's
+ * image address register (TX_SETIMAGE3), as a game switches images of one kind between draws. The texture cache keys
+ * the image on the object, when the object's size and format are the map's, instead of hashing its contents at each
+ * draw.
+ */
+void GXSetTexImageObject(const GXTexObj* obj, GXTexMapID id);
 
 /**
  * Restore rendering to the main EFB framebuffer.

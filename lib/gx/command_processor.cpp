@@ -875,6 +875,27 @@ void handle_aurora(ByteReader& reader) noexcept {
       slot.texDataVersion = newTexDataVersion;
       g_gxState.dirty |= DirtyTextures;
     }
+  } else if (subCmd == GX_AURORA_SET_TEX_IMG_OBJ) {
+    const auto texMapId = reader.read<u8>();
+    CHECK(texMapId < MaxTextures, "invalid texture map id {}", texMapId);
+    auto& slot = g_gxState.loadedTextures[texMapId];
+    const auto newData = reinterpret_cast<const void*>(reader.read<u64>());
+    const u32 objWidth = reader.read<u32>();
+    const u32 objHeight = reader.read<u32>();
+    const u32 objFormat = reader.read<u32>();
+    const u32 objTexObjId = reader.read<u32>();
+    const u32 objTexDataVersion = reader.read<u32>();
+    // The map keeps its size and format, as the image register leaves them: the object names the image only when
+    // they are its own, and otherwise the image goes without an identity, as GX_AURORA_SET_TEX_IMG_PTR leaves it.
+    const bool sameKind = slot.width() == objWidth && slot.height() == objHeight && slot.format() == objFormat;
+    const u32 newTexObjId = sameKind ? objTexObjId : 0;
+    const u32 newTexDataVersion = sameKind ? objTexDataVersion : 0;
+    if (slot.data != newData || slot.texObjId != newTexObjId || slot.texDataVersion != newTexDataVersion) {
+      slot.data = newData;
+      slot.texObjId = newTexObjId;
+      slot.texDataVersion = newTexDataVersion;
+      g_gxState.dirty |= DirtyTextures;
+    }
   } else if (subCmd == GX_AURORA_SET_TEX_IMG_PTR) {
     const auto texMapId = reader.read<u8>();
     CHECK(texMapId < MaxTextures, "invalid texture map id {}", texMapId);
