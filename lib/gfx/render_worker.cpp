@@ -48,8 +48,9 @@ void worker_main(std::stop_token token) {
       ZoneScopedN("QueueItem work");
       item->work();
     }
-    complete_sync(item->sync);
+    // Counted done before its waiter wakes, so that a thread returning from synchronize sees the worker idle.
     g_pendingItems.fetch_sub(1, std::memory_order_acq_rel);
+    complete_sync(item->sync);
     if (item->type == ItemType::Shutdown) {
       break;
     }
