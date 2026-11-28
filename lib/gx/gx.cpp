@@ -19,6 +19,8 @@
 #include <bit>
 #include <cfloat>
 #include <cmath>
+#include <cstddef>
+#include <cstring>
 #include <mutex>
 #include <utility>
 
@@ -37,6 +39,30 @@ wgpu::Texture sEmptyTexture;
 wgpu::TextureView sEmptyTextureView;
 wgpu::BindGroupLayout sTextureBindGroupLayout;
 wgpu::PipelineLayout sPipelineLayout;
+
+// The sampler each texture slot took last (build_bind_groups, on the FIFO thread): a slot's sampling settings rarely
+// change from one bind group to the next, so a comparison of the descriptor's settings skips the sampler cache's
+// hash, lock and lookup (gfx::sampler_handle). The cache owns the samplers until shutdown, which clears these.
+struct SlotSampler {
+  wgpu::SamplerDescriptor descriptor{};
+  WGPUSampler sampler = nullptr;
+};
+std::array<SlotSampler, MaxTextures> sSlotSamplers;
+
+WGPUSampler slot_sampler(u32 slot, const wgpu::SamplerDescriptor& descriptor) noexcept {
+  // The settings, as the cache's hash takes them: from the address modes to the anisotropy, past the chain and the
+  // label before them and the padding after, whose bytes a descriptor built by value leaves undefined.
+  constexpr size_t offset = offsetof(wgpu::SamplerDescriptor, addressModeU);
+  constexpr size_t size =
+      offsetof(wgpu::SamplerDescriptor, maxAnisotropy) + sizeof(wgpu::SamplerDescriptor::maxAnisotropy) - offset;
+  auto& last = sSlotSamplers[slot];
+  if (last.sampler == nullptr || std::memcmp(reinterpret_cast<const u8*>(&last.descriptor) + offset,
+                                             reinterpret_cast<const u8*>(&descriptor) + offset, size) != 0) {
+    last.descriptor = descriptor;
+    last.sampler = gfx::sampler_handle(descriptor);
+  }
+  return last.sampler;
+}
 
 std::atomic<int> sPendingViewportPolicy{-1};
 
@@ -593,7 +619,7 @@ GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
     samplerEntry.binding = i * 2 + 1;
     if (tex && (info.sampledTextures[i] || info.sampledIndTextures[i])) {
       textureEntry.textureView = tex.ref->sampleTextureView.Get();
-      samplerEntry.sampler = gfx::sampler_ref(tex.get_descriptor()).Get();
+      samplerEntry.sampler = slot_sampler(i, tex.get_descriptor());
     } else {
       textureEntry.textureView = sEmptyTextureView.Get();
       samplerEntry.sampler = sEmptySampler.Get();
@@ -689,6 +715,7 @@ void initialize() noexcept {
 void shutdown() noexcept {
   // TODO we should probably store this all in g_state.gx instead
   sTextureBindGroupLayout = {};
+  sSlotSamplers.fill({});
   for (auto& item : g_gxState.textures) {
     item.ref.reset();
   }
