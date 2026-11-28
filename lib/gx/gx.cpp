@@ -8,6 +8,7 @@
 #include "../window.hpp"
 #include "../gfx/resources.hpp"
 #include "../gfx/recording.hpp"
+#include "../gfx/hash.hpp"
 #include "../gfx/resource_cache.hpp"
 #include "../gfx/texture.hpp"
 #include "gx_fmt.hpp"
@@ -611,6 +612,9 @@ GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
 
   // Using C WGPU types instead of C++ wrappers to avoid destructor overhead
   std::array<WGPUBindGroupEntry, MaxTextures * 2> textureEntries{};
+  // The bind group's key: its layout and each slot's view and sampler, all else in the entries being fixed, hashed in
+  // place of the entries' many bytes.
+  std::array<const void*, MaxTextures * 2 + 1> keyHandles{};
   for (u32 i = 0; i < MaxTextures; ++i) {
     const auto& tex = g_gxState.textures[i];
     WGPUBindGroupEntry& textureEntry = textureEntries[i * 2];
@@ -624,15 +628,21 @@ GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
       textureEntry.textureView = sEmptyTextureView.Get();
       samplerEntry.sampler = sEmptySampler.Get();
     }
+    keyHandles[i * 2] = textureEntry.textureView;
+    keyHandles[i * 2 + 1] = samplerEntry.sampler;
   }
+  keyHandles[MaxTextures * 2] = sTextureBindGroupLayout.Get();
   const WGPUBindGroupDescriptor textureBindGroupDescriptor{
       .label = {"GX Texture Bind Group", WGPU_STRLEN},
       .layout = sTextureBindGroupLayout.Get(),
       .entryCount = textureEntries.size(),
       .entries = textureEntries.data(),
   };
+  // A seed of its own keeps these keys apart from the descriptor hashes of the cache's other users.
+  constexpr HashType TextureBindGroupSeed = 0x47585465787442ull;
   return {
-      .textureBindGroup = gfx::bind_group_ref(textureBindGroupDescriptor),
+      .textureBindGroup = gfx::bind_group_ref(
+          textureBindGroupDescriptor, xxh3_hash_s(keyHandles.data(), sizeof(keyHandles), TextureBindGroupSeed)),
   };
 }
 
