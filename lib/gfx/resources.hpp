@@ -8,6 +8,9 @@ inline constexpr uint64_t UniformBufferSize = 33554432; // 32 MiB
 inline constexpr uint64_t VertexBufferSize = 16777216; // 16 MiB
 inline constexpr uint64_t IndexBufferSize = 8388608; // 8 MiB
 inline constexpr uint64_t StorageBufferSize = 16777216; // 16 MiB
+// The storage buffer's part past a frame's own storage that keeps vertex arrays from frame to frame
+// (push_cached_storage).
+inline constexpr uint64_t ArrayCacheSize = 50331648; // 48 MiB
 inline constexpr uint64_t TextureUploadSize = 25165824; // 24 MiB
 
 namespace detail {

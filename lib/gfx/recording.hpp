@@ -108,6 +108,13 @@ Range push_uniform(const T& data) {
   return push_uniform(reinterpret_cast<const uint8_t*>(&data), sizeof(T));
 }
 Range push_storage(const uint8_t* data, size_t length);
+// A vertex array in the storage buffer, kept from frame to frame by its contents: an array the cache holds is not
+// copied again, one it does not hold enters it through the frame's staging storage. An address whose contents change
+// is pushed with each frame's storage (push_storage) instead, as are arrays that find the cache full, which is emptied
+// at the next frame's start. The range's offset is from the storage buffer's start.
+Range push_cached_storage(const uint8_t* data, size_t length);
+// Empties the array cache, for a new storage buffer.
+void reset_array_cache() noexcept;
 template <typename T>
 Range push_storage(ArrayRef<T> data) {
   return push_storage(reinterpret_cast<const uint8_t*>(data.data()), data.size() * sizeof(T));

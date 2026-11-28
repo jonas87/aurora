@@ -383,7 +383,7 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
     }
     auto& array = state.arrays[i];
     if (array.cachedRange.size == 0) {
-      array.cachedRange = gfx::push_storage(static_cast<const uint8_t*>(array.data), array.size);
+      array.cachedRange = gfx::push_cached_storage(static_cast<const uint8_t*>(array.data), array.size);
     }
     immediates.arrayStart[i - GX_VA_POS] = array.cachedRange.offset;
   }
