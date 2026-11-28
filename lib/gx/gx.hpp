@@ -580,6 +580,13 @@ struct ShaderInfo {
   std::bitset<MaxIndStages> usedIndStages;
   std::bitset<MaxTextures> sampledIndTextures;
   std::bitset<MaxIndTexMtxs> usedIndTexMtxs;
+  // The matrices of the uniform block. Compact, when the vertices carry no matrix index and no lines or points are
+  // drawn: the current position matrix, then matrix memory's slots (position and texture matrices of three rows,
+  // and the identity at 20) that the sampled texture coordinates read, then the current normal matrix. Otherwise
+  // all of matrix memory and every normal matrix. The post-transform matrices are only those used, in order.
+  bool compactMatrices = false;
+  u8 matrixSlotCount = 0;
+  std::array<u8, MaxPnMtx + MaxTexMtx + 1> matrixSlots{};
   u32 uniformSize = 0;
   bool usesFog : 1 = false;
   bool lightingEnabled : 1 = false;

@@ -260,10 +260,6 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
     }
   }
 
-  // 10 position matrices, 10 texture matrices and the identity of matrix memory's rows 60 to 62,
-  // then 10 normal matrices and an identity.
-  info.uniformSize += sizeof(Mat3x4<float>) * 32;
-
   for (int i = 0; i < config.tevStageCount; ++i) {
     const auto& stage = config.tevStages[i];
     // Color pass
@@ -409,8 +405,44 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
       info.usesPTTexMtx.set(postMtxIdx);
     }
   }
-  if (info.usesPTTexMtx.any()) {
-    info.uniformSize += sizeof(Mat3x4<float>) * MaxPTTexMtx;
+  info.uniformSize += sizeof(Mat3x4<float>) * info.usesPTTexMtx.count();
+
+  // The matrix block (ShaderInfo::compactMatrices): the slots of matrix memory that the sampled texture coordinates
+  // read, or all of it when a vertex names its matrices.
+  info.compactMatrices = config.lineMode == 0 && config.attrs[GX_VA_PNMTXIDX].attrType == GX_NONE;
+  std::bitset<MaxPnMtx + MaxTexMtx + 1> slots;
+  for (int i = 0; i < info.sampledTexCoords.size() && info.compactMatrices; ++i) {
+    const auto& tcg = config.tcgs[i];
+    if (!info.sampledTexCoords.test(i) || (tcg.type != GX_TG_MTX2x4 && tcg.type != GX_TG_MTX3x4)) {
+      continue;
+    }
+    // A matrix index in the vertex selects any texture matrix (the shader tests it before the identity).
+    if (info.indexAttr.test(GX_VA_TEX0MTXIDX + i)) {
+      info.compactMatrices = false;
+      break;
+    }
+    if (tcg.mtx == GX_IDENTITY) {
+      continue;
+    }
+    // A matrix of three rows from its first row (a texture matrix ID); rows past matrix memory read as zero.
+    for (u32 row = tcg.mtx; row < tcg.mtx + 3; ++row) {
+      if (row / 3 < slots.size()) {
+        slots.set(row / 3);
+      }
+    }
+  }
+  if (info.compactMatrices) {
+    for (u32 slot = 0; slot < slots.size(); ++slot) {
+      if (slots.test(slot)) {
+        info.matrixSlots[info.matrixSlotCount++] = static_cast<u8>(slot);
+      }
+    }
+    // The current position matrix, the slots and the current normal matrix.
+    info.uniformSize += sizeof(Mat3x4<float>) * (info.matrixSlotCount + 2);
+  } else {
+    // 10 position matrices, 10 texture matrices and the identity of matrix memory's rows 60 to 62,
+    // then 10 normal matrices and an identity.
+    info.uniformSize += sizeof(Mat3x4<float>) * 32;
   }
   if (config.fogType != GX_FOG_NONE) {
     info.usesFog = true;
@@ -560,25 +592,43 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
   }
   buf.append(uploaded_projection());
 
-  for (int i = 0; i < MaxPnMtx; i++) {
-    buf.append(g_gxState.pnMtx[i].pos);
-  }
-
-  for (int i = 0; i < MaxTexMtx; i++) {
-    buf.append(g_gxState.texMtxs[i]);
-  }
   // Matrix memory's rows 60 to 62: the identity GXInit loads there (see the shader's postex_mtx).
   const Mat3x4<float> identity{
       Vec4{1.f, 0.f, 0.f, 0.f},
       Vec4{0.f, 1.f, 0.f, 0.f},
       Vec4{0.f, 0.f, 1.f, 0.f},
   };
-  buf.append(identity);
-
-  for (int i = 0; i < MaxPnMtx; i++) {
-    buf.append(g_gxState.pnMtx[i].nrm);
+  if (info.compactMatrices) {
+    // A slot of matrix memory: a position matrix, a texture matrix or the identity, as the full block holds them
+    // (an index past the identity reads it, as the shader's array access does).
+    const auto slotMatrix = [&](u32 slot) -> const Mat3x4<float>& {
+      if (slot < MaxPnMtx) {
+        return g_gxState.pnMtx[slot].pos;
+      }
+      if (slot < MaxPnMtx + MaxTexMtx) {
+        return g_gxState.texMtxs[slot - MaxPnMtx];
+      }
+      return identity;
+    };
+    const u32 current = g_gxState.currentPnMtx;
+    buf.append(slotMatrix(current));
+    for (u32 i = 0; i < info.matrixSlotCount; ++i) {
+      buf.append(slotMatrix(info.matrixSlots[i]));
+    }
+    buf.append(current < MaxPnMtx ? g_gxState.pnMtx[current].nrm : identity);
+  } else {
+    for (int i = 0; i < MaxPnMtx; i++) {
+      buf.append(g_gxState.pnMtx[i].pos);
+    }
+    for (int i = 0; i < MaxTexMtx; i++) {
+      buf.append(g_gxState.texMtxs[i]);
+    }
+    buf.append(identity);
+    for (int i = 0; i < MaxPnMtx; i++) {
+      buf.append(g_gxState.pnMtx[i].nrm);
+    }
+    buf.append(identity);
   }
-  buf.append(identity);
 
   for (int i = 0; i < info.loadsTevReg.size(); ++i) {
     if (info.loadsTevReg.test(i)) {
@@ -622,8 +672,8 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
       buf.append(g_gxState.kcolors[i]);
     }
   }
-  if (info.usesPTTexMtx.any()) {
-    for (int i = 0; i < info.usesPTTexMtx.size(); ++i) {
+  for (int i = 0; i < info.usesPTTexMtx.size(); ++i) {
+    if (info.usesPTTexMtx.test(i)) {
       buf.append(g_gxState.ptTexMtxs[i]);
     }
   }

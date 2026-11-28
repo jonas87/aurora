@@ -130,6 +130,9 @@ struct DrawCache {
   u8 lineMode = 0;
   bool hasPipeline = false;
   gfx::Range uniformRange{};
+  // The current position matrix the uniform block was built with: a compact block holds that matrix
+  // (ShaderInfo::compactMatrices).
+  u32 uniformPnMtx = 0;
   gfx::Range fogRange{};
   FogRangeLutKey fogRangeKey{};
   bool hasFogRange = false;
@@ -428,9 +431,11 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
     }
   }
 
-  const bool uniformValid = (state.dirty & DirtyUniform) == 0 && cache.uniformRange.size != 0;
+  const bool uniformValid = (state.dirty & DirtyUniform) == 0 && cache.uniformRange.size != 0 &&
+                            (!cache.shaderInfo.compactMatrices || cache.uniformPnMtx == state.currentPnMtx);
   if (!uniformValid) {
     cache.uniformRange = build_uniform(cache.shaderInfo);
+    cache.uniformPnMtx = state.currentPnMtx;
     state.dirty &= ~DirtyUniform;
   }
   if (cache.config.shaderConfig.fogRangeEnabled) {

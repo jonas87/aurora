@@ -555,6 +555,29 @@ std::string_view tev_scale(GXTevScale scale) {
   }
 }
 
+// The uniform block's postex_mtx entry of a matrix memory slot (ShaderInfo::compactMatrices): the slot itself, or in
+// a compact block its place after the current position matrix.
+u32 matrix_slot(const ShaderInfo& info, u32 slot) {
+  if (!info.compactMatrices) {
+    return slot;
+  }
+  for (u32 i = 0; i < info.matrixSlotCount; ++i) {
+    if (info.matrixSlots[i] == slot) {
+      return i + 1;
+    }
+  }
+  UNLIKELY FATAL("matrix slot {} missing from the compact block", slot);
+}
+
+// The uniform block's postmtx entry of a post-transform matrix: the used ones, in order.
+u32 post_matrix_slot(const ShaderInfo& info, u32 postMtxIdx) {
+  u32 index = 0;
+  for (u32 i = 0; i < postMtxIdx; ++i) {
+    index += info.usesPTTexMtx.test(i) ? 1 : 0;
+  }
+  return index;
+}
+
 std::string vtx_attr(const ShaderConfig& config, GXAttr attr) {
   const auto type = config.attrs[attr].attrType;
   if (type == GX_NONE) {
@@ -989,7 +1012,9 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
     }
     vidxAttr = "in_vidx"sv;
   } else if (config.attrs[GX_VA_PNMTXIDX].attrType == GX_NONE) {
-    vtxXfrAttrsPre += "\n    let in_pnmtxidx = imm.current_pnmtx;";
+    // A compact matrix block holds the current position matrix first (ShaderInfo::compactMatrices).
+    vtxXfrAttrsPre +=
+        info.compactMatrices ? "\n    let in_pnmtxidx = 0u;" : "\n    let in_pnmtxidx = imm.current_pnmtx;";
   }
 
   // Load vertex attributes
@@ -1074,11 +1099,19 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
   }
 
   uniBufAttrs += "\n    proj: mat4x4f,";
-  // Matrix memory's rows 60 to 62 (matrix 20, after the position and texture matrices) hold the
-  // identity that GXInit loads there: position matrix 60 and texture matrix GX_IDENTITY read it.
-  // The normal matrices end with an identity for a position matrix past them.
-  uniBufAttrs += fmt::format("\n    postex_mtx: array<mat3x4f, {}>,", MaxPnMtx + MaxTexMtx + 1);
-  uniBufAttrs += fmt::format("\n    nrm_mtx: array<mat3x4f, {}>,", MaxPnMtx + 1);
+  if (info.compactMatrices) {
+    // The current position matrix, the slots of matrix memory the texture coordinates read, and the
+    // current normal matrix (ShaderInfo::compactMatrices).
+    uniBufAttrs += fmt::format("\n    postex_mtx: array<mat3x4f, {}>,", info.matrixSlotCount + 1);
+    uniBufAttrs += "\n    nrm_mtx: array<mat3x4f, 1>,";
+  } else {
+    // Matrix memory's rows 60 to 62 (matrix 20, after the position and texture matrices) hold the
+    // identity that GXInit loads there: position matrix 60 and texture matrix GX_IDENTITY read it.
+    // The normal matrices end with an identity, which a position matrix past them takes; the hardware
+    // reads such a matrix's normal rows at its row index modulo 32 instead.
+    uniBufAttrs += fmt::format("\n    postex_mtx: array<mat3x4f, {}>,", MaxPnMtx + MaxTexMtx + 1);
+    uniBufAttrs += fmt::format("\n    nrm_mtx: array<mat3x4f, {}>,", MaxPnMtx + 1);
+  }
   std::string fragmentFnPre;
   std::string fragmentFn;
 
@@ -1262,7 +1295,8 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
         vtxXfrAttrs += fmt::format("\n    var tc{0}_tmp = tc{0}.xyz;", i);
       } else if (tcg.mtx % 3 == 0) {
         u32 texMtxIdx = (tcg.mtx) / 3;
-        vtxXfrAttrs += fmt::format("\n    var tc{0}_tmp = tc{0} * ubuf.postex_mtx[{1}];", i, texMtxIdx);
+        vtxXfrAttrs +=
+            fmt::format("\n    var tc{0}_tmp = tc{0} * ubuf.postex_mtx[{1}];", i, matrix_slot(info, texMtxIdx));
       } else {
         // The matrix starts within a position or texture matrix: matrix memory is addressed by
         // row, and a texture matrix ID is its first row. Row r is column r % 3 of postex_mtx[r / 3];
@@ -1271,7 +1305,7 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
           if (row >= (MaxPnMtx + MaxTexMtx + 1) * 3) {
             return std::string{"0.0"};
           }
-          return fmt::format("dot(tc{}, ubuf.postex_mtx[{}][{}])", i, row / 3, row % 3);
+          return fmt::format("dot(tc{}, ubuf.postex_mtx[{}][{}])", i, matrix_slot(info, row / 3), row % 3);
         };
         const u32 first = tcg.mtx;
         vtxXfrAttrs += fmt::format("\n    var tc{}_tmp = vec3f({}, {}, {});", i, rowDot(first), rowDot(first + 1),
@@ -1290,8 +1324,8 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
       vtxXfrAttrs += fmt::format("\n    var tc{0}_proj = tc{0}_tmp;", i);
     } else {
       u32 postMtxIdx = (tcg.postMtx - GX_PTTEXMTX0) / 3;
-      vtxXfrAttrs +=
-          fmt::format("\n    var tc{0}_proj = vec4f(tc{0}_tmp.xyz, 1.0) * ubuf.postmtx[{1}];", i, postMtxIdx);
+      vtxXfrAttrs += fmt::format("\n    var tc{0}_proj = vec4f(tc{0}_tmp.xyz, 1.0) * ubuf.postmtx[{1}];", i,
+                                 post_matrix_slot(info, postMtxIdx));
     }
     // Apply line/point tex offset
     if (config.lineMode == 3) {
@@ -1544,7 +1578,7 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
                     underlying(stage.texMapId), uvIn);
   }
   if (info.usesPTTexMtx.any()) {
-    uniBufAttrs += fmt::format("\n    postmtx: array<mat3x4f, {}>,", MaxPTTexMtx);
+    uniBufAttrs += fmt::format("\n    postmtx: array<mat3x4f, {}>,", info.usesPTTexMtx.count());
   }
   if (info.usesFog) {
     uniformPre +=
