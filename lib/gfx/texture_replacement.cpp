@@ -10,6 +10,7 @@
 #include "png_io.hpp"
 #include "texture_convert.hpp"
 
+#include <atomic>
 #include <aurora/texture.hpp>
 #include <fmt/format.h>
 #include <tracy/Tracy.hpp>
@@ -141,6 +142,11 @@ uint64_t s_replacementCacheBytes = 0;
 uint64_t s_nextRegistrationId = 1;
 uint64_t s_nextSequence = 1;
 uint32_t s_sourceEntryCount = 0;
+// Whether any replacement is registered, kept with s_entriesByKey under the registry lock and read without it:
+// the draws' pointer lookups skip the lock while there are none.
+std::atomic<bool> s_hasEntries{false};
+
+void note_entries_changed_locked() noexcept { s_hasEntries.store(!s_entriesByKey.empty(), std::memory_order_release); }
 
 std::mutex s_jobMutex;
 std::condition_variable s_jobCv;
@@ -1328,6 +1334,7 @@ bool unregister_replacement_locked(const ReplacementRegistration& registration,
   entries.erase(entry);
   if (entries.empty()) {
     s_entriesByKey.erase(it);
+    note_entries_changed_locked();
   }
   return true;
 }
@@ -1340,6 +1347,7 @@ void clear_replacement_runtime_state_locked(std::vector<std::shared_ptr<VirtualR
     }
   }
   s_entriesByKey.clear();
+  note_entries_changed_locked();
   s_cacheByKey.clear();
   s_failedIds.clear();
   s_reportedMisses.clear();
@@ -1368,6 +1376,7 @@ ReplacementRegistration register_file_replacement(TextureSourceKey key, std::fil
       .label = fmt::format("TextureReplacement {}", io::fs_path_to_string(path.filename())),
       .path = std::move(path),
   });
+  note_entries_changed_locked();
   ++s_sourceEntryCount;
   const auto snapshot = snapshot_entry(replacementKey, entries.back());
   queue_thumbnail_load(snapshot);
@@ -1499,6 +1508,7 @@ ReplacementRegistration register_replacement(ReplacementKey key, RawTextureRepla
       .gxFormat = replacement.gxFormat,
       .label = std::string(replacement.label),
   });
+  note_entries_changed_locked();
   if (is_source_key(key)) {
     ++s_sourceEntryCount;
   }
@@ -1560,6 +1570,7 @@ void unregister_replacements(const ReplacementKey& key) {
       }
       erase_cache_locked(key);
       s_entriesByKey.erase(it);
+      note_entries_changed_locked();
       gx::clear_static_texture_cache();
       removed = true;
     }
@@ -1610,6 +1621,7 @@ ReplacementRegistration register_virtual_replacement(std::string_view path, Virt
       .source = source,
       .virtualReadState = std::make_shared<VirtualReadState>(),
   });
+  note_entries_changed_locked();
   ++s_sourceEntryCount;
   const auto snapshot = snapshot_entry(replacementKey, entries.back());
   queue_thumbnail_load(snapshot);
@@ -1823,7 +1835,7 @@ std::optional<ReplacementResult> find_source_replacement_locked(const GXTexObj_&
 
 std::optional<ReplacementResult> find_pointer_replacement(const GXTexObj_& obj) noexcept {
   ZoneScoped;
-  if (obj.data == nullptr) {
+  if (obj.data == nullptr || !s_hasEntries.load(std::memory_order_acquire)) {
     return std::nullopt;
   }
 
@@ -1846,6 +1858,10 @@ std::optional<ReplacementResult> find_source_replacement(const GXTexObj_& obj,
 }
 
 bool should_build_source_key() noexcept {
+  // Without any replacement there are no source-keyed ones either: the draws' check skips the lock.
+  if (!s_hasEntries.load(std::memory_order_acquire) && !g_config.allowTextureDumps) {
+    return false;
+  }
   std::lock_guard lk(s_registryMutex);
   return s_sourceEntryCount != 0 || g_config.allowTextureDumps;
 }
