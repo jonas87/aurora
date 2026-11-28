@@ -24,74 +24,65 @@ namespace aurora::gx::fifo {
 namespace {
 constexpr Module Log{"aurora::gx::fifo"};
 
+// The indices are written in place, the buffer grown once per primitive: appended one by one, each paid a size check
+// and a copy, a noticeable share of the FIFO's time in scenes of many small strips.
 u16 prepare_idx_buffer(ByteBuffer& buf, GXPrimitive prim, u16 vtxStart, u16 vtxCount) noexcept {
-  u16 numIndices = 0;
+  const auto reserve = [&buf](u32 count) { return reinterpret_cast<u16*>(buf.append_uninitialized(count * sizeof(u16))); };
   if (prim == GX_QUADS) {
-    buf.reserve_extra((vtxCount / 4) * 6 * sizeof(u16));
-
+    const u32 count = ((u32(vtxCount) + 3) / 4) * 6;
+    u16* out = reserve(count);
     for (u16 v = 0; v < vtxCount; v += 4) {
-      u16 idx0 = vtxStart + v;
-      u16 idx1 = vtxStart + v + 1;
-      u16 idx2 = vtxStart + v + 2;
-      u16 idx3 = vtxStart + v + 3;
-
-      buf.append(idx0);
-      buf.append(idx1);
-      buf.append(idx2);
-      numIndices += 3;
-
-      buf.append(idx2);
-      buf.append(idx3);
-      buf.append(idx0);
-      numIndices += 3;
+      const u16 idx0 = vtxStart + v;
+      *out++ = idx0;
+      *out++ = idx0 + 1;
+      *out++ = idx0 + 2;
+      *out++ = idx0 + 2;
+      *out++ = idx0 + 3;
+      *out++ = idx0;
     }
-  } else if (prim == GX_TRIANGLES) {
-    buf.reserve_extra(vtxCount * sizeof(u16));
+    return static_cast<u16>(count);
+  }
+  if (prim == GX_TRIANGLES) {
+    u16* out = reserve(vtxCount);
     for (u16 v = 0; v < vtxCount; ++v) {
-      const u16 idx = vtxStart + v;
-      buf.append(idx);
-      ++numIndices;
+      out[v] = vtxStart + v;
     }
-  } else if (prim == GX_TRIANGLEFAN) {
-    buf.reserve_extra(((u32(vtxCount) - 3) * 3 + 3) * sizeof(u16));
+    return vtxCount;
+  }
+  if (prim == GX_TRIANGLEFAN || prim == GX_TRIANGLESTRIP) {
+    const u32 count = vtxCount < 3 ? vtxCount : 3 + (u32(vtxCount) - 3) * 3;
+    u16* out = reserve(count);
     for (u16 v = 0; v < vtxCount; ++v) {
       const u16 idx = vtxStart + v;
       if (v < 3) {
-        buf.append(idx);
-        ++numIndices;
-        continue;
-      }
-      buf.append(std::array{vtxStart, static_cast<u16>(idx - 1), idx});
-      numIndices += 3;
-    }
-  } else if (prim == GX_TRIANGLESTRIP) {
-    buf.reserve_extra(((static_cast<u32>(vtxCount) - 3) * 3 + 3) * sizeof(u16));
-    for (u16 v = 0; v < vtxCount; ++v) {
-      const u16 idx = vtxStart + v;
-      if (v < 3) {
-        buf.append(idx);
-        ++numIndices;
-        continue;
-      }
-      if ((v & 1) == 0) {
-        buf.append(std::array{static_cast<u16>(idx - 2), static_cast<u16>(idx - 1), idx});
+        *out++ = idx;
+      } else if (prim == GX_TRIANGLEFAN) {
+        *out++ = vtxStart;
+        *out++ = idx - 1;
+        *out++ = idx;
+      } else if ((v & 1) == 0) {
+        *out++ = idx - 2;
+        *out++ = idx - 1;
+        *out++ = idx;
       } else {
-        buf.append(std::array{static_cast<u16>(idx - 1), static_cast<u16>(idx - 2), idx});
+        *out++ = idx - 1;
+        *out++ = idx - 2;
+        *out++ = idx;
       }
-      numIndices += 3;
     }
-  } else if (prim == GX_LINES || prim == GX_LINESTRIP || prim == GX_POINTS) {
-    buf.reserve_extra(6 * sizeof(u16));
-    buf.append<u16>(0);
-    buf.append<u16>(1);
-    buf.append<u16>(3);
-    buf.append<u16>(3);
-    buf.append<u16>(2);
-    buf.append<u16>(0);
-    numIndices = 6;
-  } else
-    UNLIKELY FATAL("unsupported primitive type {}", static_cast<u32>(prim));
-  return numIndices;
+    return static_cast<u16>(count);
+  }
+  if (prim == GX_LINES || prim == GX_LINESTRIP || prim == GX_POINTS) {
+    u16* out = reserve(6);
+    out[0] = 0;
+    out[1] = 1;
+    out[2] = 3;
+    out[3] = 3;
+    out[4] = 2;
+    out[5] = 0;
+    return 6;
+  }
+  UNLIKELY FATAL("unsupported primitive type {}", static_cast<u32>(prim));
 }
 
 // GX FIFO opcodes - use CP_ prefix to avoid clashing with GXCommandList.h macros

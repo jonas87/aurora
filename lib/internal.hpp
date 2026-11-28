@@ -301,6 +301,14 @@ public:
     m_length += size;
   }
 
+  // Extends the buffer by size bytes and returns where they start, for the caller to fill.
+  [[nodiscard]] uint8_t* append_uninitialized(size_t size) {
+    resize(m_length + size, false);
+    uint8_t* start = m_data + m_length;
+    m_length += size;
+    return start;
+  }
+
   void release() {
     if (m_data != nullptr && m_owned) {
       free(m_data);
