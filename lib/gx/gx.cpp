@@ -305,6 +305,14 @@ void set_logical_viewport(const gfx::Viewport& viewport) noexcept {
   set_render_viewport(map_logical_viewport(viewport));
 }
 
+void set_screen_viewport(const gfx::Viewport& viewport) noexcept {
+  g_gxState.screenViewport = viewport;
+  auto efbViewport = viewport;
+  efbViewport.left -= static_cast<float>(g_gxState.scissorBoxOffset.x);
+  efbViewport.top -= static_cast<float>(g_gxState.scissorBoxOffset.y);
+  set_logical_viewport(efbViewport);
+}
+
 void set_render_viewport(const gfx::Viewport& viewport) noexcept {
   // The whole viewport: the co-planar depth plane (coplanar_window_plane) also reads its top and
   // depth range.

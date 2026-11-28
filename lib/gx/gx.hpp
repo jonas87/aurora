@@ -404,9 +404,14 @@ struct GXState {
 
   // View state
   AuroraViewportPolicy viewportPolicy = AURORA_VIEWPORT_FIT;
+  // The viewport in screen coordinates, as the transform unit holds it, and in EFB coordinates:
+  // the screen viewport less the scissor box offset.
+  gfx::Viewport screenViewport{0.f, 0.f, 640.f, 480.f, 0.f, 1.f};
   gfx::Viewport logicalViewport{0.f, 0.f, 640.f, 480.f, 0.f, 1.f};
   gfx::Viewport renderViewport{0.f, 0.f, 640.f, 480.f, 0.f, 1.f};
   gfx::ClipRect logicalScissor{0, 0, 640, 480};
+  // The scissor box offset (GXSetScissorBoxOffset), subtracted from screen coordinates.
+  Vec2<s32> scissorBoxOffset{0, 0};
   gfx::ClipRect renderScissor{0, 0, 640, 480};
 
   // EFB copy state
@@ -458,6 +463,7 @@ Vec2<uint32_t> logical_fb_size() noexcept;
 gfx::Viewport map_logical_viewport(const gfx::Viewport& logicalViewport) noexcept;
 gfx::ClipRect map_logical_scissor(const gfx::ClipRect& logicalScissor) noexcept;
 void set_logical_viewport(const gfx::Viewport& viewport) noexcept;
+void set_screen_viewport(const gfx::Viewport& viewport) noexcept;
 void set_render_viewport(const gfx::Viewport& viewport) noexcept;
 void set_logical_scissor(const gfx::ClipRect& scissor) noexcept;
 void set_render_scissor(const gfx::ClipRect& scissor) noexcept;

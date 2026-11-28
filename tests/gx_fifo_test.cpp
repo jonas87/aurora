@@ -2665,6 +2665,34 @@ TEST_F(GXFifoTest, Scissor_EncodesBpAndDecodesLogicalState) {
   EXPECT_EQ(g_gxState.logicalScissor.height, 240);
 }
 
+TEST_F(GXFifoTest, ScissorBoxOffset_MovesScissorAndViewportIntoTheEfb) {
+  GXSetViewport(0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f);
+  GXSetScissor(0, 238, 640, 242);
+  GXSetScissorBoxOffset(0, 238);
+  auto bytes = capture_fifo();
+
+  // The register holds the offset with the screen bias, halved, as the SDK writes it.
+  EXPECT_TRUE(has_bp_write(bytes, 0x59));
+
+  reset_gx_state();
+  decode_fifo(bytes);
+
+  // Screen row y lands in EFB row y - 238.
+  EXPECT_EQ(g_gxState.logicalScissor.x, 0);
+  EXPECT_EQ(g_gxState.logicalScissor.y, 0);
+  EXPECT_EQ(g_gxState.logicalScissor.width, 640);
+  EXPECT_EQ(g_gxState.logicalScissor.height, 242);
+  EXPECT_FLOAT_EQ(g_gxState.logicalViewport.left, 0.0f);
+  EXPECT_FLOAT_EQ(g_gxState.logicalViewport.top, -238.0f);
+  EXPECT_FLOAT_EQ(g_gxState.logicalViewport.height, 480.0f);
+
+  GXSetScissorBoxOffset(0, 0);
+  bytes = capture_fifo();
+  decode_fifo(bytes);
+  EXPECT_EQ(g_gxState.logicalScissor.y, 238);
+  EXPECT_FLOAT_EQ(g_gxState.logicalViewport.top, 0.0f);
+}
+
 TEST_F(GXFifoTest, GetViewportShadowState) {
   f32 vp[6]{};
 
