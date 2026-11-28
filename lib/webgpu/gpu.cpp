@@ -278,6 +278,13 @@ wgpu::PresentMode select_present_mode(std::span<const wgpu::PresentMode> modes, 
       return wgpu::PresentMode::FifoRelaxed;
     }
   } else {
+    // With tearing allowed (AuroraConfig::allowTearing) each frame is shown as it is presented, which is also how a
+    // display with variable refresh follows the frames. Dawn's D3D12 mailbox presents at sync interval 0 without
+    // tearing, which in full screen queues the frames for the display's vblanks (three buffers) instead of replacing
+    // them, so a frame rate above the display's fills the queue and keeps it full.
+    if (g_config.allowTearing && supports(wgpu::PresentMode::Immediate)) {
+      return wgpu::PresentMode::Immediate;
+    }
     // Dawn only disables CAMetalLayer displaySyncEnabled for Immediate on Metal
     if (g_backendType != wgpu::BackendType::Metal && supports(wgpu::PresentMode::Mailbox)) {
       return wgpu::PresentMode::Mailbox;

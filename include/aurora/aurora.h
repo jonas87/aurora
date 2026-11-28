@@ -162,6 +162,12 @@ typedef struct {
   uint32_t msaa;
   uint16_t maxTextureAnisotropy;
   bool vsync;
+  /*
+   * Without vertical sync: present each frame as it comes, tearing allowed (Immediate), where available. Otherwise a
+   * tear-free mode (Mailbox) is preferred, which on D3D12 in full screen queues the frames for the display's vblanks:
+   * at a frame rate above the display's the queue fills and adds its frames to the latency.
+   */
+  bool allowTearing;
   bool startFullscreen;
   bool allowJoystickBackgroundEvents;
   bool pauseOnFocusLost;
