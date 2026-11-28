@@ -270,17 +270,34 @@ Vec2<uint32_t> logical_fb_size() noexcept {
   return logicalSize.x != 0 ? logicalSize : gfx::get_render_target_size();
 }
 
-bool logical_scale(float& scaleX, float& scaleY) noexcept {
-  // An offscreen framebuffer at the EFB's scale maps with the EFB's sizes, not its own rounded ones.
+namespace {
+// The logical frame's size and that of the render target it maps onto. An offscreen framebuffer at the EFB's scale
+// maps with the EFB's sizes, not its own rounded ones.
+bool logical_mapping(Vec2<uint32_t>& logicalSize, Vec2<uint32_t>& targetSize) noexcept {
   const auto efbSize = gfx::offscreen_efb_size();
   const bool efbScaled = efbSize.x != 0;
-  const auto [logicalFbWidth, logicalFbHeight] = efbScaled ? vi::configured_fb_size() : logical_fb_size();
-  const auto [targetWidth, targetHeight] = efbScaled ? efbSize : gfx::get_render_target_size();
-  if (logicalFbWidth == 0 || logicalFbHeight == 0 || targetWidth == 0 || targetHeight == 0) {
+  logicalSize = efbScaled ? vi::configured_fb_size() : logical_fb_size();
+  targetSize = efbScaled ? efbSize : gfx::get_render_target_size();
+  return logicalSize.x != 0 && logicalSize.y != 0 && targetSize.x != 0 && targetSize.y != 0;
+}
+
+// A logical coordinate in render target pixels: the coordinate times the target's size over the logical frame's.
+// An edge of the logical frame lands exactly on the target's; through a float scale (the target's size over the
+// logical frame's, inexact for most sizes) the frame's far edge falls short of the target's, and the rasteriser leaves
+// the target's last pixel column or row undrawn.
+double map_logical(double value, uint32_t targetSize, uint32_t logicalSize) noexcept {
+  return value * static_cast<double>(targetSize) / static_cast<double>(logicalSize);
+}
+} // namespace
+
+bool logical_scale(float& scaleX, float& scaleY) noexcept {
+  Vec2<uint32_t> logicalSize;
+  Vec2<uint32_t> targetSize;
+  if (!logical_mapping(logicalSize, targetSize)) {
     return false;
   }
-  scaleX = static_cast<float>(targetWidth) / static_cast<float>(logicalFbWidth);
-  scaleY = static_cast<float>(targetHeight) / static_cast<float>(logicalFbHeight);
+  scaleX = static_cast<float>(targetSize.x) / static_cast<float>(logicalSize.x);
+  scaleY = static_cast<float>(targetSize.y) / static_cast<float>(logicalSize.y);
   return true;
 }
 
@@ -289,16 +306,25 @@ gfx::Viewport map_logical_viewport(const gfx::Viewport& logicalViewport) noexcep
     return logicalViewport;
   }
 
-  float scaleX = 1.f;
-  float scaleY = 1.f;
-  if (!logical_scale(scaleX, scaleY)) {
+  Vec2<uint32_t> logicalSize;
+  Vec2<uint32_t> targetSize;
+  if (!logical_mapping(logicalSize, targetSize)) {
     return logicalViewport;
   }
+  // The edges map, and the size follows from them.
+  const double left = map_logical(logicalViewport.left, targetSize.x, logicalSize.x);
+  const double top = map_logical(logicalViewport.top, targetSize.y, logicalSize.y);
+  const double right =
+      map_logical(static_cast<double>(logicalViewport.left) + static_cast<double>(logicalViewport.width),
+                  targetSize.x, logicalSize.x);
+  const double bottom =
+      map_logical(static_cast<double>(logicalViewport.top) + static_cast<double>(logicalViewport.height),
+                  targetSize.y, logicalSize.y);
   return {
-      .left = logicalViewport.left * scaleX,
-      .top = logicalViewport.top * scaleY,
-      .width = logicalViewport.width * scaleX,
-      .height = logicalViewport.height * scaleY,
+      .left = static_cast<float>(left),
+      .top = static_cast<float>(top),
+      .width = static_cast<float>(right - left),
+      .height = static_cast<float>(bottom - top),
       .znear = logicalViewport.znear,
       .zfar = logicalViewport.zfar,
   };
@@ -309,17 +335,19 @@ gfx::ClipRect map_logical_scissor(const gfx::ClipRect& logicalScissor) noexcept 
     return logicalScissor;
   }
 
-  float scaleX = 1.f;
-  float scaleY = 1.f;
-  if (!logical_scale(scaleX, scaleY)) {
+  Vec2<uint32_t> logicalSize;
+  Vec2<uint32_t> mappedSize;
+  if (!logical_mapping(logicalSize, mappedSize)) {
     return logicalScissor;
   }
   const auto [targetWidth, targetHeight] = gfx::get_render_target_size();
 
-  const float left = static_cast<float>(logicalScissor.x) * scaleX;
-  const float top = static_cast<float>(logicalScissor.y) * scaleY;
-  const float right = static_cast<float>(logicalScissor.x + logicalScissor.width) * scaleX;
-  const float bottom = static_cast<float>(logicalScissor.y + logicalScissor.height) * scaleY;
+  const double left = map_logical(logicalScissor.x, mappedSize.x, logicalSize.x);
+  const double top = map_logical(logicalScissor.y, mappedSize.y, logicalSize.y);
+  const double right =
+      map_logical(static_cast<double>(logicalScissor.x) + logicalScissor.width, mappedSize.x, logicalSize.x);
+  const double bottom =
+      map_logical(static_cast<double>(logicalScissor.y) + logicalScissor.height, mappedSize.y, logicalSize.y);
 
   const auto mappedLeft = std::clamp(static_cast<int32_t>(std::floor(left)), 0, static_cast<int32_t>(targetWidth));
   const auto mappedTop = std::clamp(static_cast<int32_t>(std::floor(top)), 0, static_cast<int32_t>(targetHeight));
